@@ -1,0 +1,6 @@
+{
+  "name": "Dourado Veículos",
+  "description": "Plataforma completa para venda de carros com catálogo interativo e painel administrativo de estoque.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
