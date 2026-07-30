@@ -7,11 +7,19 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   ArrowLeft, Calendar, Gauge, Settings, Fuel, 
   Check, Send, CheckCircle2, MapPin, Sparkles, MessageCircle,
-  Play, Pause, ChevronLeft, ChevronRight, RotateCcw, Info
+  Play, Pause, ChevronLeft, ChevronRight, RotateCcw, Info,
+  X, Maximize2, ZoomIn, ZoomOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Car, LeadMessage, Vehicle360, DamageMarker } from '../types';
 import { vehicle360Service } from '../services/vehicle360.service';
+
+const HOTSPOT_VISIBLE_RANGE = 2;
+
+function isMarkerVisibleOnFrame(markerFrameIndex: number, currentFrame: number): boolean {
+  const diff = Math.abs(currentFrame - markerFrameIndex);
+  return diff <= HOTSPOT_VISIBLE_RANGE;
+}
 
 interface CarDetailsProps {
   car: Car;
@@ -33,7 +41,72 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
   const [loading360, setLoading360] = useState(true);
   const [currentFrame360, setCurrentFrame360] = useState(0);
   const [isPlaying360, setIsPlaying360] = useState(false);
-  const [activeMarker, setActiveMarker] = useState<DamageMarker | null>(null);
+
+  // Modal and Lightbox states for damage markers
+  const [modalMarker, setModalMarker] = useState<DamageMarker | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [lightboxZoom, setLightboxZoom] = useState<number>(1);
+  const [lightboxPan, setLightboxPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDraggingLightbox, setIsDraggingLightbox] = useState<boolean>(false);
+  const lightboxDragStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Car Photo Gallery Fullscreen Lightbox states
+  const [galleryLightboxIndex, setGalleryLightboxIndex] = useState<number | null>(null);
+  const [galleryZoom, setGalleryZoom] = useState<number>(1);
+  const [galleryPan, setGalleryPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isDraggingGallery, setIsDraggingGallery] = useState<boolean>(false);
+  const galleryDragStart = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const touchStartX = useRef<number | null>(null);
+
+  // Preloading 2 frames before & 2 frames after current frame
+  useEffect(() => {
+    if (!project360?.images || project360.images.length === 0) return;
+    const total = project360.images.length;
+    const indicesToPreload = [
+      (currentFrame360 - 2 + total) % total,
+      (currentFrame360 - 1 + total) % total,
+      (currentFrame360 + 1) % total,
+      (currentFrame360 + 2) % total,
+    ];
+    indicesToPreload.forEach(idx => {
+      const url = project360.images[idx];
+      if (url) {
+        const img = new Image();
+        img.src = url;
+      }
+    });
+  }, [currentFrame360, project360]);
+
+  // Global Keyboard listener to close modals/lightboxes and navigate gallery
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (lightboxImage) {
+          setLightboxImage(null);
+          setLightboxZoom(1);
+          setLightboxPan({ x: 0, y: 0 });
+        } else if (galleryLightboxIndex !== null) {
+          setGalleryLightboxIndex(null);
+          setGalleryZoom(1);
+          setGalleryPan({ x: 0, y: 0 });
+        } else if (modalMarker) {
+          setModalMarker(null);
+        }
+      } else if (galleryLightboxIndex !== null && car.images && car.images.length > 0) {
+        if (e.key === 'ArrowLeft') {
+          setGalleryLightboxIndex(prev => prev !== null ? (prev - 1 + car.images.length) % car.images.length : 0);
+          setGalleryZoom(1);
+          setGalleryPan({ x: 0, y: 0 });
+        } else if (e.key === 'ArrowRight') {
+          setGalleryLightboxIndex(prev => prev !== null ? (prev + 1) % car.images.length : 0);
+          setGalleryZoom(1);
+          setGalleryPan({ x: 0, y: 0 });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxImage, galleryLightboxIndex, modalMarker, car.images]);
 
   // Drag-to-rotate states
   const [isDragging360, setIsDragging360] = useState(false);
@@ -196,8 +269,16 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
           {/* Left Side: Images and Gallery */}
           <div className="lg:col-span-8 space-y-4">
             
-            {/* Primary Display image */}
-            <div className="bg-white rounded-2xl overflow-hidden border border-slate-100 shadow-sm aspect-video relative flex items-center justify-center">
+            {/* Primary Display image with Fullscreen Lightbox trigger */}
+            <div 
+              onClick={() => {
+                const idx = car.images.indexOf(activeImage);
+                setGalleryLightboxIndex(idx >= 0 ? idx : 0);
+                setGalleryZoom(1);
+                setGalleryPan({ x: 0, y: 0 });
+              }}
+              className="bg-slate-900 rounded-3xl overflow-hidden border border-slate-200/80 shadow-md aspect-video relative flex items-center justify-center cursor-pointer group select-none"
+            >
               <AnimatePresence mode="wait">
                 <motion.img
                   key={activeImage}
@@ -207,13 +288,21 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                   transition={{ duration: 0.3 }}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-103"
                   referrerPolicy="no-referrer"
                 />
               </AnimatePresence>
+
+              {/* Hover overlay prompt */}
+              <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <div className="bg-slate-900/90 backdrop-blur-md px-4 py-2 rounded-2xl flex items-center gap-2 text-white font-bold text-xs border border-slate-700/60 shadow-2xl">
+                  <Maximize2 className="w-4 h-4 text-red-500" />
+                  <span>Clique para ampliar em Tela Cheia</span>
+                </div>
+              </div>
               
               {car.isSold && (
-                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                <div className="absolute inset-0 bg-black/40 flex items-center justify-center pointer-events-none">
                   <div className="bg-slate-900 text-white font-extrabold px-6 py-3 rounded-2xl text-xl uppercase tracking-widest shadow-lg">
                     Veículo Reservado / Vendido
                   </div>
@@ -227,12 +316,18 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                 {car.images.map((img, idx) => (
                   <button
                     key={idx}
-                    onClick={() => setActiveImage(img)}
-                    className={`relative w-28 sm:w-36 aspect-video rounded-xl overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
-                      activeImage === img ? 'border-red-600 shadow-md' : 'border-slate-200 hover:border-slate-400 opacity-80 hover:opacity-100'
+                    type="button"
+                    onClick={() => {
+                      setActiveImage(img);
+                      setGalleryLightboxIndex(idx);
+                      setGalleryZoom(1);
+                      setGalleryPan({ x: 0, y: 0 });
+                    }}
+                    className={`relative w-28 sm:w-36 aspect-video rounded-xl overflow-hidden border-2 transition-all cursor-pointer shrink-0 group ${
+                      activeImage === img ? 'border-red-600 shadow-md ring-2 ring-red-600/30' : 'border-slate-200 hover:border-slate-400 opacity-80 hover:opacity-100'
                     }`}
                   >
-                    <img src={img} alt={`Thumb ${idx}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                    <img src={img} alt={`Thumb ${idx}`} className="w-full h-full object-cover group-hover:scale-105 transition-transform" referrerPolicy="no-referrer" />
                   </button>
                 ))}
               </div>
@@ -344,9 +439,9 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
           </div>
 
           {loading360 ? (
-            <div className="h-[300px] sm:h-[420px] bg-slate-50 rounded-2xl border border-slate-200 flex flex-col items-center justify-center">
-              <RotateCcw className="w-8 h-8 text-red-600 animate-spin mb-2" />
-              <span className="text-xs font-bold text-slate-500">Carregando visualização 360°...</span>
+            <div className="h-[450px] sm:h-[650px] bg-slate-900 rounded-3xl border border-slate-800 flex flex-col items-center justify-center animate-pulse">
+              <RotateCcw className="w-10 h-10 text-red-600 animate-spin mb-3" />
+              <span className="text-sm font-bold text-slate-400">Carregando visualização 360°...</span>
             </div>
           ) : project360 && project360.images && project360.images.length > 0 ? (
             /* ACTIVE 360 DEGREE INTERACTIVE INSPECTOR */
@@ -356,150 +451,121 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                 onPointerMove={handlePointerMove360}
                 onPointerUp={handlePointerUp360}
                 onPointerLeave={handlePointerUp360}
-                className="relative bg-slate-900 rounded-2xl overflow-hidden h-[300px] sm:h-[450px] flex items-center justify-center border border-slate-800 cursor-grab active:cursor-grabbing select-none touch-none"
+                className="relative bg-slate-950 rounded-3xl overflow-hidden h-[50vh] sm:h-[75vh] min-h-[420px] max-h-[850px] w-full flex items-center justify-center border border-slate-800/80 shadow-2xl cursor-grab active:cursor-grabbing select-none touch-none"
               >
-                {/* 360 Frame Image */}
+                {/* 360 Frame Image - Centered object-contain without black side borders */}
                 {project360.images[currentFrame360] && (
                   <img 
                     src={project360.images[currentFrame360]} 
                     alt={`Veículo 360° - Frame ${currentFrame360 + 1}`}
-                    className="max-h-full max-w-full object-contain pointer-events-none select-none"
+                    className="w-full h-full object-contain pointer-events-none select-none p-2 sm:p-4"
                     referrerPolicy="no-referrer"
                   />
                 )}
 
                 {/* Drag Help Overlay */}
-                <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl text-[10px] font-bold text-slate-200 flex items-center gap-1.5 pointer-events-none shadow-sm">
-                  <RotateCcw className="w-3.5 h-3.5 text-red-500" />
+                <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md px-3.5 py-2 rounded-xl text-xs font-bold text-slate-200 flex items-center gap-2 pointer-events-none shadow-lg border border-slate-800">
+                  <RotateCcw className="w-4 h-4 text-red-500" />
                   <span>Arraste para girar o carro</span>
                 </div>
 
-                {/* Active Damage Markers for the current frame */}
+                {/* Active Damage Markers with linear range persistence (±2 frames) */}
                 {markers360
-                  .filter(marker => Number(marker.frameIndex) === currentFrame360)
+                  .filter(marker => isMarkerVisibleOnFrame(Number(marker.frameIndex), currentFrame360))
                   .map(marker => {
-                    const isSelected = activeMarker?.id === marker.id;
+                    const diff = Math.abs(currentFrame360 - Number(marker.frameIndex));
+                    const opacity = Math.max(0.3, 1 - (diff / (HOTSPOT_VISIBLE_RANGE + 1)) * 0.4);
+                    const scale = Math.max(0.75, 1 - (diff / (HOTSPOT_VISIBLE_RANGE + 1)) * 0.15);
+
                     return (
                       <div
                         key={marker.id}
-                        style={{ top: `${marker.posY}%`, left: `${marker.posX}%` }}
-                        className="absolute z-20"
+                        style={{ 
+                          top: `${marker.posY}%`, 
+                          left: `${marker.posX}%`,
+                          opacity,
+                          transform: `translate(-50%, -50%) scale(${scale})`,
+                          transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+                        }}
+                        className="absolute z-20 group"
                       >
+                        {/* Marker Circle */}
                         <button
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation();
-                            setActiveMarker(isSelected ? null : marker);
+                            setModalMarker(marker);
                           }}
-                          className={`w-6 h-6 rounded-full flex items-center justify-center cursor-pointer transition-all ${
-                            isSelected ? 'bg-red-600 text-white scale-110 shadow-lg ring-4 ring-red-600/30' : 'bg-slate-950/90 text-white hover:bg-red-600'
-                          }`}
-                          title={marker.title}
+                          className="relative cursor-pointer transition-transform duration-200 hover:scale-125 focus:outline-none"
                         >
-                          <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-                          </span>
+                          {/* Pulse Ring */}
+                          <span className="absolute -inset-2 rounded-full bg-red-500/40 animate-ping pointer-events-none" />
+                          {/* Inner Marker Circle */}
+                          <div className="relative w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-red-600 border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ring-red-500/50">
+                            <span className="w-2.5 h-2.5 rounded-full bg-white shadow-inner" />
+                          </div>
                         </button>
 
-                        {/* Interactive tooltip content inside the canvas */}
-                        {isSelected && (
-                          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 bg-slate-950 text-white p-3.5 rounded-xl border border-slate-800 shadow-2xl pointer-events-auto z-30 space-y-2">
-                            <div className="flex justify-between items-start gap-1">
-                              <h5 className="font-extrabold text-[11px] text-red-500 uppercase tracking-wide">
-                                {marker.category || 'Diferencial'} • {marker.title}
-                              </h5>
-                              <button 
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setActiveMarker(null);
-                                }}
-                                className="text-slate-400 hover:text-white font-black text-xs"
-                              >
-                                ✕
-                              </button>
-                            </div>
-                            <p className="text-[11px] text-slate-300 leading-relaxed">
-                              {marker.description}
-                            </p>
-
-                            {/* Damage Detail Images */}
-                            {marker.damageImages && marker.damageImages.length > 0 && (
-                              <div className="grid grid-cols-3 gap-1.5 pt-1">
-                                {marker.damageImages.map((imgUrl, idx) => (
-                                  <a 
-                                    key={idx}
-                                    href={imgUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="aspect-square rounded-lg overflow-hidden border border-slate-800 hover:border-red-600 transition-colors"
-                                  >
-                                    <img src={imgUrl} alt="Avaria detalhe" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-                            <div className="absolute top-full left-1/2 -translate-x-1/2 border-6 border-transparent border-t-slate-950"></div>
+                        {/* Hover Tooltip */}
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 transition-all duration-200">
+                          <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-xl shadow-2xl whitespace-nowrap border border-slate-700/60 text-center space-y-0.5">
+                            <span className="font-extrabold block text-red-400">{marker.title}</span>
+                            <span className="text-[10px] text-slate-300 font-medium block">Clique para detalhar</span>
                           </div>
-                        )}
+                          <div className="w-2.5 h-2.5 bg-slate-900/95 rotate-45 -mt-1.5 border-r border-b border-slate-700/60" />
+                        </div>
                       </div>
                     );
                   })}
               </div>
 
-              {/* Bottom Control Bar */}
-              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCurrentFrame360(prev => {
-                        const total = project360.images.length;
-                        return (prev - 1 + total) % total;
-                      });
-                    }}
-                    className="p-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 hover:text-slate-900 rounded-xl transition-all cursor-pointer shadow-xs"
-                    title="Frame Anterior"
-                  >
-                    <ChevronLeft className="w-5 h-5" />
-                  </button>
+              {/* Bottom Control Bar - Strictly ◀, ▶, Giro Automático (No frame counter) */}
+              <div className="bg-slate-900/90 backdrop-blur-md border border-slate-800 rounded-2xl p-3 flex items-center justify-center gap-3 shadow-xl">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentFrame360(prev => {
+                      const total = project360.images.length;
+                      return (prev - 1 + total) % total;
+                    });
+                  }}
+                  className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white rounded-xl transition-all cursor-pointer shadow-sm active:scale-95"
+                  title="Anterior"
+                >
+                  <ChevronLeft className="w-5 h-5" />
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setIsPlaying360(!isPlaying360)}
-                    className="px-4 py-2.5 bg-slate-900 hover:bg-red-600 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-                  >
-                    {isPlaying360 ? (
-                      <>
-                        <Pause className="w-3.5 h-3.5 fill-current" />
-                        <span>Pausar</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>Giro Automático</span>
-                      </>
-                    )}
-                  </button>
+                <button
+                  type="button"
+                  onClick={() => setIsPlaying360(!isPlaying360)}
+                  className="px-6 py-3 bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-md active:scale-95"
+                >
+                  {isPlaying360 ? (
+                    <>
+                      <Pause className="w-4 h-4 fill-current" />
+                      <span>Pausar</span>
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 fill-current" />
+                      <span>Giro Automático</span>
+                    </>
+                  )}
+                </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCurrentFrame360(prev => {
-                        const total = project360.images.length;
-                        return (prev + 1) % total;
-                      });
-                    }}
-                    className="p-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 hover:text-slate-900 rounded-xl transition-all cursor-pointer shadow-xs"
-                    title="Próximo Frame"
-                  >
-                    <ChevronRight className="w-5 h-5" />
-                  </button>
-                </div>
-
-                <div className="flex items-center gap-2.5 text-xs font-mono font-bold text-slate-500 bg-white border border-slate-200 px-4 py-2 rounded-xl shadow-xs">
-                  <span>FRAME {currentFrame360 + 1} DE {project360.images.length}</span>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentFrame360(prev => {
+                      const total = project360.images.length;
+                      return (prev + 1) % total;
+                    });
+                  }}
+                  className="p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white rounded-xl transition-all cursor-pointer shadow-sm active:scale-95"
+                  title="Próximo"
+                >
+                  <ChevronRight className="w-5 h-5" />
+                </button>
               </div>
             </div>
           ) : (
@@ -704,6 +770,418 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
           </div>
         </div>
       </div>
+
+      {/* MODERN DAMAGE MARKER DETAIL MODAL */}
+      <AnimatePresence>
+        {modalMarker && (
+          <div 
+            className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6"
+            onClick={() => setModalMarker(null)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 15 }}
+              transition={{ duration: 0.3, ease: 'easeOut' }}
+              className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl space-y-4 relative text-white"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-red-400 bg-red-950/80 border border-red-800/60 px-2.5 py-0.5 rounded-full inline-block">
+                    {modalMarker.category || 'Detalhe'}
+                  </span>
+                  <h3 className="font-black text-xl text-white">
+                    {modalMarker.title}
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setModalMarker(null)}
+                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Image Preview (Occupying almost all modal area) */}
+              {modalMarker.damageImages && modalMarker.damageImages.length > 0 ? (
+                <div className="relative group bg-slate-950 rounded-2xl overflow-hidden border border-slate-800/80 aspect-video sm:aspect-[16/10] flex items-center justify-center">
+                  <img 
+                    src={modalMarker.damageImages[0]} 
+                    alt={modalMarker.title}
+                    className="w-full h-full object-contain cursor-pointer transition-transform duration-300 group-hover:scale-102"
+                    referrerPolicy="no-referrer"
+                    onClick={() => {
+                      setLightboxImage(modalMarker.damageImages[0]);
+                      setLightboxZoom(1);
+                      setLightboxPan({ x: 0, y: 0 });
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLightboxImage(modalMarker.damageImages[0]);
+                      setLightboxZoom(1);
+                      setLightboxPan({ x: 0, y: 0 });
+                    }}
+                    className="absolute bottom-3 right-3 bg-slate-900/90 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-700 flex items-center gap-1.5 transition-colors shadow-lg cursor-pointer"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                    <span>Tela Cheia</span>
+                  </button>
+                </div>
+              ) : null}
+
+              {/* Description */}
+              {modalMarker.description && (
+                <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80">
+                  <p className="text-sm text-slate-300 leading-relaxed">
+                    {modalMarker.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Bottom Actions */}
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setModalMarker(null)}
+                  className="px-6 py-2.5 bg-slate-800 hover:bg-red-600 text-white font-bold text-sm rounded-xl transition-colors cursor-pointer"
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* FULLSCREEN LIGHTBOX WITH ZOOM & PAN */}
+      <AnimatePresence>
+        {lightboxImage && (
+          <div 
+            className="fixed inset-0 z-60 bg-black/95 backdrop-blur-2xl flex items-center justify-center select-none"
+            onClick={() => {
+              setLightboxImage(null);
+              setLightboxZoom(1);
+              setLightboxPan({ x: 0, y: 0 });
+            }}
+          >
+            {/* Top Toolbar */}
+            <div 
+              className="absolute top-4 right-4 z-70 flex items-center gap-2 bg-slate-900/90 border border-slate-800 p-2 rounded-2xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setLightboxZoom(prev => Math.min(prev + 0.5, 3))}
+                className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                title="Aumentar Zoom"
+              >
+                <ZoomIn className="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxZoom(prev => {
+                    const n = Math.max(prev - 0.5, 1);
+                    if (n === 1) setLightboxPan({ x: 0, y: 0 });
+                    return n;
+                  });
+                }}
+                className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                title="Reduzir Zoom"
+              >
+                <ZoomOut className="w-5 h-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxZoom(1);
+                  setLightboxPan({ x: 0, y: 0 });
+                }}
+                className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                title="Resetar Zoom"
+              >
+                100%
+              </button>
+              <div className="w-px h-5 bg-slate-800 my-auto" />
+              <button
+                type="button"
+                onClick={() => {
+                  setLightboxImage(null);
+                  setLightboxZoom(1);
+                  setLightboxPan({ x: 0, y: 0 });
+                }}
+                className="p-2 text-slate-300 hover:text-red-500 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                title="Fechar (ESC)"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Lightbox Image Stage */}
+            <div 
+              className="w-full h-full flex items-center justify-center overflow-hidden cursor-grab active:cursor-grabbing p-4"
+              onWheel={(e) => {
+                e.stopPropagation();
+                if (e.deltaY < 0) {
+                  setLightboxZoom(prev => Math.min(prev + 0.25, 3));
+                } else {
+                  setLightboxZoom(prev => {
+                    const n = Math.max(prev - 0.25, 1);
+                    if (n === 1) setLightboxPan({ x: 0, y: 0 });
+                    return n;
+                  });
+                }
+              }}
+              onMouseDown={(e) => {
+                if (lightboxZoom > 1) {
+                  e.stopPropagation();
+                  setIsDraggingLightbox(true);
+                  lightboxDragStart.current = { x: e.clientX - lightboxPan.x, y: e.clientY - lightboxPan.y };
+                }
+              }}
+              onMouseMove={(e) => {
+                if (isDraggingLightbox && lightboxZoom > 1) {
+                  e.stopPropagation();
+                  setLightboxPan({
+                    x: e.clientX - lightboxDragStart.current.x,
+                    y: e.clientY - lightboxDragStart.current.y
+                  });
+                }
+              }}
+              onMouseUp={() => setIsDraggingLightbox(false)}
+              onMouseLeave={() => setIsDraggingLightbox(false)}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <img 
+                src={lightboxImage} 
+                alt="Detalhe em Tela Cheia"
+                style={{
+                  transform: `translate(${lightboxPan.x}px, ${lightboxPan.y}px) scale(${lightboxZoom})`,
+                  transition: isDraggingLightbox ? 'none' : 'transform 0.15s ease-out'
+                }}
+                className="max-w-full max-h-full object-contain select-none pointer-events-auto shadow-2xl rounded-lg"
+                draggable={false}
+                referrerPolicy="no-referrer"
+              />
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* FULLSCREEN VEHICLE GALLERY LIGHTBOX */}
+      <AnimatePresence>
+        {galleryLightboxIndex !== null && car.images && car.images.length > 0 && (
+          <div 
+            className="fixed inset-0 z-60 bg-black/95 backdrop-blur-2xl flex flex-col justify-between p-3 sm:p-6 select-none"
+            onClick={() => {
+              setGalleryLightboxIndex(null);
+              setGalleryZoom(1);
+              setGalleryPan({ x: 0, y: 0 });
+            }}
+          >
+            {/* Top Toolbar */}
+            <div 
+              className="w-full flex items-center justify-between z-70 bg-slate-900/80 backdrop-blur-md border border-slate-800/80 px-4 py-2.5 rounded-2xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Counter */}
+              <div className="flex items-center gap-2">
+                <span className="text-xs sm:text-sm font-extrabold text-white tracking-wide">
+                  {car.brand} {car.model}
+                </span>
+                <span className="text-xs font-mono font-bold text-red-500 bg-red-950/80 border border-red-800/60 px-2.5 py-0.5 rounded-full">
+                  {galleryLightboxIndex + 1} / {car.images.length}
+                </span>
+              </div>
+
+              {/* Toolbar Controls */}
+              <div className="flex items-center gap-1.5 sm:gap-2">
+                <button
+                  type="button"
+                  onClick={() => setGalleryZoom(prev => Math.min(prev + 0.5, 3))}
+                  className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  title="Aumentar Zoom"
+                >
+                  <ZoomIn className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGalleryZoom(prev => {
+                      const n = Math.max(prev - 0.5, 1);
+                      if (n === 1) setGalleryPan({ x: 0, y: 0 });
+                      return n;
+                    });
+                  }}
+                  className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  title="Reduzir Zoom"
+                >
+                  <ZoomOut className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGalleryZoom(1);
+                    setGalleryPan({ x: 0, y: 0 });
+                  }}
+                  className="p-2 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl text-xs font-bold transition-colors cursor-pointer hidden sm:block"
+                  title="Resetar Zoom"
+                >
+                  100%
+                </button>
+                <div className="w-px h-5 bg-slate-800 my-auto" />
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGalleryLightboxIndex(null);
+                    setGalleryZoom(1);
+                    setGalleryPan({ x: 0, y: 0 });
+                  }}
+                  className="p-2 text-slate-300 hover:text-red-500 hover:bg-slate-800 rounded-xl transition-colors cursor-pointer"
+                  title="Fechar (ESC)"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Main Stage with Navigation Chevrons */}
+            <div className="relative flex-1 w-full flex items-center justify-center my-2 overflow-hidden">
+              {/* Previous Image Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setGalleryLightboxIndex(prev => prev !== null ? (prev - 1 + car.images.length) % car.images.length : 0);
+                  setGalleryZoom(1);
+                  setGalleryPan({ x: 0, y: 0 });
+                }}
+                className="absolute left-2 sm:left-4 z-70 p-3.5 bg-slate-900/80 hover:bg-red-600 text-white border border-slate-700/80 rounded-2xl shadow-2xl transition-all cursor-pointer active:scale-95"
+                title="Imagem Anterior (←)"
+              >
+                <ChevronLeft className="w-6 h-6" />
+              </button>
+
+              {/* Main Image Stage */}
+              <div 
+                className="w-full h-full flex items-center justify-center overflow-hidden cursor-grab active:cursor-grabbing p-2"
+                onTouchStart={(e) => {
+                  touchStartX.current = e.touches[0].clientX;
+                }}
+                onTouchEnd={(e) => {
+                  if (touchStartX.current !== null) {
+                    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
+                    if (deltaX > 50) {
+                      setGalleryLightboxIndex(prev => prev !== null ? (prev - 1 + car.images.length) % car.images.length : 0);
+                      setGalleryZoom(1);
+                      setGalleryPan({ x: 0, y: 0 });
+                    } else if (deltaX < -50) {
+                      setGalleryLightboxIndex(prev => prev !== null ? (prev + 1) % car.images.length : 0);
+                      setGalleryZoom(1);
+                      setGalleryPan({ x: 0, y: 0 });
+                    }
+                    touchStartX.current = null;
+                  }
+                }}
+                onWheel={(e) => {
+                  e.stopPropagation();
+                  if (e.deltaY < 0) {
+                    setGalleryZoom(prev => Math.min(prev + 0.25, 3));
+                  } else {
+                    setGalleryZoom(prev => {
+                      const n = Math.max(prev - 0.25, 1);
+                      if (n === 1) setGalleryPan({ x: 0, y: 0 });
+                      return n;
+                    });
+                  }
+                }}
+                onMouseDown={(e) => {
+                  if (galleryZoom > 1) {
+                    e.stopPropagation();
+                    setIsDraggingGallery(true);
+                    galleryDragStart.current = { x: e.clientX - galleryPan.x, y: e.clientY - galleryPan.y };
+                  }
+                }}
+                onMouseMove={(e) => {
+                  if (isDraggingGallery && galleryZoom > 1) {
+                    e.stopPropagation();
+                    setGalleryPan({
+                      x: e.clientX - galleryDragStart.current.x,
+                      y: e.clientY - galleryDragStart.current.y
+                    });
+                  }
+                }}
+                onMouseUp={() => setIsDraggingGallery(false)}
+                onMouseLeave={() => setIsDraggingGallery(false)}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <motion.img 
+                  key={galleryLightboxIndex}
+                  src={car.images[galleryLightboxIndex]} 
+                  alt={`${car.brand} ${car.model} - foto ${galleryLightboxIndex + 1}`}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.2 }}
+                  style={{
+                    transform: `translate(${galleryPan.x}px, ${galleryPan.y}px) scale(${galleryZoom})`,
+                    transition: isDraggingGallery ? 'none' : 'transform 0.15s ease-out'
+                  }}
+                  className="max-w-full max-h-full object-contain select-none pointer-events-auto shadow-2xl rounded-2xl"
+                  draggable={false}
+                  referrerPolicy="no-referrer"
+                />
+              </div>
+
+              {/* Next Image Button */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setGalleryLightboxIndex(prev => prev !== null ? (prev + 1) % car.images.length : 0);
+                  setGalleryZoom(1);
+                  setGalleryPan({ x: 0, y: 0 });
+                }}
+                className="absolute right-2 sm:right-4 z-70 p-3.5 bg-slate-900/80 hover:bg-red-600 text-white border border-slate-700/80 rounded-2xl shadow-2xl transition-all cursor-pointer active:scale-95"
+                title="Próxima Imagem (→)"
+              >
+                <ChevronRight className="w-6 h-6" />
+              </button>
+            </div>
+
+            {/* Bottom Thumbnails Strip */}
+            <div 
+              className="w-full max-w-4xl mx-auto z-70 bg-slate-900/80 backdrop-blur-md border border-slate-800/80 p-2 sm:p-3 rounded-2xl shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2 overflow-x-auto scrollbar-thin py-0.5 px-1">
+                {car.images.map((img, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setGalleryLightboxIndex(idx);
+                      setActiveImage(img);
+                      setGalleryZoom(1);
+                      setGalleryPan({ x: 0, y: 0 });
+                    }}
+                    className={`relative w-16 sm:w-20 aspect-video rounded-xl overflow-hidden border-2 shrink-0 transition-all cursor-pointer ${
+                      galleryLightboxIndex === idx ? 'border-red-500 scale-105 shadow-lg ring-2 ring-red-500/50' : 'border-slate-800 opacity-60 hover:opacity-100'
+                    }`}
+                  >
+                    <img src={img} alt={`Thumb ${idx + 1}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

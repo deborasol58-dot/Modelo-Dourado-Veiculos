@@ -477,10 +477,16 @@ function Editor360({
     }
   };
 
-  // Filter markers applicable to the current frame index
+  // Marker visibility range constant (strict linear distance to avoid opposite-side ghost markers)
+  const MARKER_VISIBILITY_RANGE = 2;
+  
   const activeMarkers = useMemo(() => {
-    return markers.filter(m => m.frameIndex === currentFrame);
-  }, [markers, currentFrame]);
+    if (!frames.length) return [];
+    return markers.filter(m => {
+      const diff = Math.abs(currentFrame - m.frameIndex);
+      return diff <= MARKER_VISIBILITY_RANGE;
+    });
+  }, [markers, currentFrame, frames.length]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
