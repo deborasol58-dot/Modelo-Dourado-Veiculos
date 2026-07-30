@@ -201,7 +201,7 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
               <AnimatePresence mode="wait">
                 <motion.img
                   key={activeImage}
-                  src={activeImage}
+                  src={activeImage || car.images[0] || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=800'}
                   alt={car.model}
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
@@ -359,12 +359,14 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                 className="relative bg-slate-900 rounded-2xl overflow-hidden h-[300px] sm:h-[450px] flex items-center justify-center border border-slate-800 cursor-grab active:cursor-grabbing select-none touch-none"
               >
                 {/* 360 Frame Image */}
-                <img 
-                  src={project360.images[currentFrame360]} 
-                  alt={`Veículo 360° - Frame ${currentFrame360 + 1}`}
-                  className="max-h-full max-w-full object-contain pointer-events-none select-none"
-                  referrerPolicy="no-referrer"
-                />
+                {project360.images[currentFrame360] && (
+                  <img 
+                    src={project360.images[currentFrame360]} 
+                    alt={`Veículo 360° - Frame ${currentFrame360 + 1}`}
+                    className="max-h-full max-w-full object-contain pointer-events-none select-none"
+                    referrerPolicy="no-referrer"
+                  />
+                )}
 
                 {/* Drag Help Overlay */}
                 <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-xl text-[10px] font-bold text-slate-200 flex items-center gap-1.5 pointer-events-none shadow-sm">

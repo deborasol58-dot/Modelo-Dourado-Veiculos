@@ -115,7 +115,7 @@ Gostaria de consultar as condições de financiamento e entrega!`;
               
               <div className="flex gap-4 items-center">
                 <img
-                  src={car.images[0]}
+                  src={car.images[0] || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=800'}
                   alt={car.model}
                   className="w-16 h-12 object-cover rounded-lg border border-slate-800"
                   referrerPolicy="no-referrer"

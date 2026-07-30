@@ -535,7 +535,7 @@ export default function ClientArea({ cars, userProfile, onLogin, onLogout, onSel
                       {favoritedCars.map((car) => (
                         <div key={car.id} className="bg-slate-50 border border-slate-100 rounded-2xl p-4 flex gap-4 relative group">
                           <img
-                            src={car.images[0]}
+                            src={car.images[0] || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=800'}
                             alt={car.model}
                             className="w-24 h-18 object-cover rounded-xl"
                             referrerPolicy="no-referrer"

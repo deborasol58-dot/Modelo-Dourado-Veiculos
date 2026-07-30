@@ -55,37 +55,45 @@ export const vehicle360Service = {
       return null;
     }
 
-    const { data, error } = await supabase
-      .from('vehicle_360_frames')
+    // 1. Fetch project ID from vehicle_360_projects
+    const { data: projData } = await supabase
+      .from('vehicle_360_projects')
       .select('*')
-      .eq('vehicle_id', vehicleId);
+      .eq('vehicle_id', vehicleId)
+      .maybeSingle();
 
-    if (error) {
-      console.error(`Error querying vehicle_360_frames for vehicle ${vehicleId}:`, error);
-      throw error;
-    }
-
-    if (!data || data.length === 0) {
+    if (!projData?.id) {
       return null;
     }
 
-    // Sort by frame/order index
-    const sortedData = [...data].sort((a, b) => {
-      const idxA = a.order_index ?? a.frame_index ?? a.display_order ?? 0;
-      const idxB = b.order_index ?? b.frame_index ?? b.display_order ?? 0;
-      return idxA - idxB;
-    });
+    const projectId = projData.id;
 
-    const images = sortedData.map(d => d.image_url || d.frame_url || d.url || '');
+    // 2. Fetch frames by project_id ordered by frame_number
+    const { data: frameData, error } = await supabase
+      .from('vehicle_360_frames')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('frame_number', { ascending: true });
+
+    if (error) {
+      console.error(`Error querying vehicle_360_frames for project ${projectId}:`, error);
+      throw error;
+    }
+
+    if (!frameData || frameData.length === 0) {
+      return null;
+    }
+
+    const images = frameData.map(d => d.image_url || d.frame_url || '');
 
     return {
-      id: vehicleId,
+      id: projectId,
       vehicleId,
       framesCount: images.length,
       images,
-      status: 'Ativo',
-      createdAt: sortedData[0]?.created_at || new Date().toISOString(),
-      updatedAt: sortedData[sortedData.length - 1]?.updated_at || new Date().toISOString()
+      status: (projData.status as Vehicle360['status']) || 'draft',
+      createdAt: projData.created_at || frameData[0]?.created_at || new Date().toISOString(),
+      updatedAt: projData.updated_at || frameData[frameData.length - 1]?.created_at || new Date().toISOString()
     };
   },
 
@@ -99,46 +107,74 @@ export const vehicle360Service = {
 
     const timestamp = new Date().toISOString();
 
-    // 1. Delete old frames
-    const { error: delError } = await supabase
-      .from('vehicle_360_frames')
-      .delete()
-      .eq('vehicle_id', project.vehicleId);
+    // 1. Find or create project in vehicle_360_projects
+    let projectId = project.vehicleId;
+    const { data: existingProj } = await supabase
+      .from('vehicle_360_projects')
+      .select('id')
+      .eq('vehicle_id', project.vehicleId)
+      .maybeSingle();
 
-    if (delError) {
-      console.error('Error deleting old 360 frames from Supabase:', delError);
-      throw delError;
+    if (existingProj?.id) {
+      projectId = existingProj.id;
+      await supabase
+        .from('vehicle_360_projects')
+        .update({
+          frame_count: project.images?.length || 0,
+          status: project.status || 'draft'
+        })
+        .eq('id', projectId);
+    } else {
+      const { data: newProj, error: createErr } = await supabase
+        .from('vehicle_360_projects')
+        .insert({
+          vehicle_id: project.vehicleId,
+          frame_count: project.images?.length || 0,
+          status: project.status || 'draft'
+        })
+        .select('id')
+        .single();
+
+      if (createErr || !newProj) {
+        console.error('Error creating 360 project:', createErr);
+        throw createErr || new Error('Failed to create 360 project');
+      }
+      projectId = newProj.id;
     }
 
-    // 2. Insert new frames
+    // 2. Delete old frames for this project
+    await supabase
+      .from('vehicle_360_frames')
+      .delete()
+      .eq('project_id', projectId);
+
+    // 3. Insert new frames using project_id and frame_number
     const savedImages: string[] = [];
     if (project.images && project.images.length > 0) {
-      for (let idx = 0; idx < project.images.length; idx++) {
-        const img = project.images[idx];
-        const payload = {
-          vehicle_id: project.vehicleId,
-          image_url: img,
-          frame_url: img,
-          url: img,
-          frame_index: idx,
-          order_index: idx,
-          display_order: idx,
-          created_at: timestamp,
-          updated_at: timestamp
-        };
+      const frameRecords = project.images.map((img, idx) => ({
+        project_id: projectId,
+        frame_number: idx,
+        image_url: img,
+        created_at: timestamp
+      }));
 
-        const res = await safeInsertOrUpdate('vehicle_360_frames', undefined, payload);
-        const savedUrl = res.image_url || res.frame_url || res.url || img;
-        savedImages.push(savedUrl);
+      const { error: insErr } = await supabase
+        .from('vehicle_360_frames')
+        .insert(frameRecords);
+
+      if (insErr) {
+        console.error('Error inserting vehicle_360_frames:', insErr);
+        throw insErr;
       }
+      savedImages.push(...project.images);
     }
 
     return {
-      id: project.id || project.vehicleId,
+      id: projectId,
       vehicleId: project.vehicleId,
       framesCount: savedImages.length,
       images: savedImages,
-      status: project.status,
+      status: project.status || 'draft',
       createdAt: timestamp,
       updatedAt: timestamp
     };
@@ -152,88 +188,149 @@ export const vehicle360Service = {
       return [];
     }
 
-    const { data, error } = await supabase
-      .from('vehicle_damage_images')
-      .select('*')
-      .eq('vehicle_id', vehicleId);
+    // 1. Fetch project ID
+    const { data: projData } = await supabase
+      .from('vehicle_360_projects')
+      .select('id')
+      .eq('vehicle_id', vehicleId)
+      .maybeSingle();
 
-    if (error) {
-      console.error(`Error querying vehicle_damage_images for vehicle ${vehicleId}:`, error);
-      throw error;
+    if (!projData?.id) {
+      return [];
     }
 
-    if (!data) return [];
+    const projectId = projData.id;
 
-    return data.map((d: any) => {
-      let dmgImgs: string[] = [];
-      if (d.damage_images) {
-        dmgImgs = Array.isArray(d.damage_images) ? d.damage_images : [d.damage_images];
-      } else if (d.image_url) {
-        dmgImgs = [d.image_url];
-      } else if (d.url) {
-        dmgImgs = [d.url];
-      }
+    // 2. Fetch damage markers and associated damage images using project_id & marker_id
+    const { data: markers, error: markerErr } = await supabase
+      .from('vehicle_damage_markers')
+      .select('*, vehicle_damage_images(*)')
+      .eq('project_id', projectId);
 
-      return {
-        id: d.id,
-        vehicleId: d.vehicle_id,
-        title: d.title || 'Dano',
-        description: d.description || '',
-        category: d.category || 'Outro',
-        damageImages: dmgImgs,
-        frameIndex: Number(d.frame_index || 0),
-        posX: Number(d.pos_x ?? d.pos_index ?? 0),
-        posY: Number(d.pos_y ?? d.pos_index ?? 0),
-        createdAt: d.created_at
-      };
-    });
+    if (markerErr) {
+      console.error(`Error querying vehicle_damage_markers for project ${projectId}:`, markerErr);
+      return [];
+    }
+
+    if (!markers || markers.length === 0) {
+      return [];
+    }
+
+    return markers.map((m: any) => ({
+      id: m.id,
+      vehicleId,
+      title: m.title || 'Dano',
+      description: m.description || '',
+      category: m.category || 'Outro',
+      damageImages: (m.vehicle_damage_images || []).map((img: any) => img.image_url || ''),
+      frameIndex: Number(m.frame_number ?? 0),
+      posX: Number(m.pos_x ?? 0),
+      posY: Number(m.pos_y ?? 0),
+      createdAt: m.created_at
+    }));
   },
 
   /**
-   * Save marker
+   * Save marker using vehicle_damage_markers and vehicle_damage_images
    */
   async saveMarker(marker: Omit<DamageMarker, 'id' | 'createdAt'> & { id?: string }): Promise<DamageMarker> {
     if (!isUuid(marker.vehicleId)) {
       throw new Error(`Invalid vehicle ID: ${marker.vehicleId}. Marker operations require valid UUIDs.`);
     }
 
-    const mainImageUrl = marker.damageImages && marker.damageImages.length > 0 ? marker.damageImages[0] : null;
+    // 1. Ensure 360 project exists for this vehicle
+    let projectId: string;
+    const { data: projData } = await supabase
+      .from('vehicle_360_projects')
+      .select('id')
+      .eq('vehicle_id', marker.vehicleId)
+      .maybeSingle();
 
-    const dbRow: any = {
-      vehicle_id: marker.vehicleId,
+    if (projData?.id) {
+      projectId = projData.id;
+    } else {
+      const { data: newProj, error: projErr } = await supabase
+        .from('vehicle_360_projects')
+        .insert({ vehicle_id: marker.vehicleId, status: 'draft' })
+        .select('id')
+        .single();
+
+      if (projErr || !newProj) {
+        throw projErr || new Error('Failed to create project for marker');
+      }
+      projectId = newProj.id;
+    }
+
+    // 2. Upsert marker in vehicle_damage_markers
+    const markerPayload = {
+      project_id: projectId,
       title: marker.title,
       description: marker.description,
       category: marker.category,
-      damage_images: marker.damageImages,
-      image_url: mainImageUrl,
-      url: mainImageUrl,
-      frame_index: marker.frameIndex,
+      frame_number: marker.frameIndex,
       pos_x: marker.posX,
       pos_y: marker.posY
     };
 
-    const res = await safeInsertOrUpdate('vehicle_damage_images', marker.id, dbRow);
+    let markerId = marker.id;
+    let savedMarker: any;
 
-    let dmgImgs: string[] = [];
-    if (res.damage_images) {
-      dmgImgs = Array.isArray(res.damage_images) ? res.damage_images : [res.damage_images];
-    } else if (res.image_url) {
-      dmgImgs = [res.image_url];
-    } else if (res.url) {
-      dmgImgs = [res.url];
+    if (markerId && isUuid(markerId)) {
+      const { data, error } = await supabase
+        .from('vehicle_damage_markers')
+        .update(markerPayload)
+        .eq('id', markerId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error updating vehicle_damage_markers:', error);
+        throw error;
+      }
+      savedMarker = data;
+    } else {
+      const { data, error } = await supabase
+        .from('vehicle_damage_markers')
+        .insert(markerPayload)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error inserting vehicle_damage_markers:', error);
+        throw error;
+      }
+      savedMarker = data;
+      markerId = savedMarker.id;
+    }
+
+    // 3. Save images in vehicle_damage_images using marker_id
+    let savedImages: string[] = marker.damageImages || [];
+    if (markerId) {
+      await supabase.from('vehicle_damage_images').delete().eq('marker_id', markerId);
+
+      if (marker.damageImages && marker.damageImages.length > 0) {
+        const imageRows = marker.damageImages.map(imgUrl => ({
+          marker_id: markerId,
+          image_url: imgUrl
+        }));
+        const { error: imgErr } = await supabase.from('vehicle_damage_images').insert(imageRows);
+        if (imgErr) {
+          console.error('Error inserting vehicle_damage_images:', imgErr);
+        }
+      }
     }
 
     return {
-      id: res.id,
-      vehicleId: res.vehicle_id,
-      title: res.title || 'Dano',
-      description: res.description || '',
-      category: res.category || 'Outro',
-      damageImages: dmgImgs,
-      frameIndex: Number(res.frame_index || 0),
-      posX: Number(res.pos_x ?? 0),
-      posY: Number(res.pos_y ?? 0),
-      createdAt: res.created_at
+      id: markerId!,
+      vehicleId: marker.vehicleId,
+      title: savedMarker.title || 'Dano',
+      description: savedMarker.description || '',
+      category: savedMarker.category || 'Outro',
+      damageImages: savedImages,
+      frameIndex: Number(savedMarker.frame_number ?? 0),
+      posX: Number(savedMarker.pos_x ?? 0),
+      posY: Number(savedMarker.pos_y ?? 0),
+      createdAt: savedMarker.created_at || new Date().toISOString()
     };
   },
 
@@ -242,13 +339,14 @@ export const vehicle360Service = {
    */
   async deleteMarker(markerId: string, _vehicleId: string): Promise<void> {
     if (!isUuid(markerId)) {
-      throw new Error(`Invalid marker ID: ${markerId}. Marker deletions are only supported for valid UUIDs.`);
+      throw new Error(`Invalid marker ID: ${markerId}. Marker deletions require valid UUIDs.`);
     }
 
-    const { error } = await supabase
-      .from('vehicle_damage_images')
-      .delete()
-      .eq('id', markerId);
+    // 1. Delete associated damage images
+    await supabase.from('vehicle_damage_images').delete().eq('marker_id', markerId);
+
+    // 2. Delete marker row
+    const { error } = await supabase.from('vehicle_damage_markers').delete().eq('id', markerId);
 
     if (error) {
       console.error(`Error deleting marker ${markerId}:`, error);
@@ -261,30 +359,40 @@ export const vehicle360Service = {
    */
   async delete360Project(vehicleId: string): Promise<void> {
     if (!isUuid(vehicleId)) {
-      throw new Error(`Invalid vehicle ID: ${vehicleId}. Project deletions are only supported for valid UUIDs.`);
+      throw new Error(`Invalid vehicle ID: ${vehicleId}. Project deletions require valid UUIDs.`);
     }
 
-    // 1. Delete damages
-    const { error: errDamages } = await supabase
-      .from('vehicle_damage_images')
-      .delete()
-      .eq('vehicle_id', vehicleId);
+    const { data: projData } = await supabase
+      .from('vehicle_360_projects')
+      .select('id')
+      .eq('vehicle_id', vehicleId)
+      .maybeSingle();
 
-    if (errDamages) {
-      console.error(`Error deleting damage images for vehicle ${vehicleId}:`, errDamages);
-      throw errDamages;
+    if (!projData?.id) {
+      return;
     }
 
-    // 2. Delete frames from DB
-    const { error: errFrames } = await supabase
-      .from('vehicle_360_frames')
-      .delete()
-      .eq('vehicle_id', vehicleId);
+    const projectId = projData.id;
 
-    if (errFrames) {
-      console.error(`Error deleting 360 frames for vehicle ${vehicleId}:`, errFrames);
-      throw errFrames;
+    // 1. Find markers for this project to delete images
+    const { data: markers } = await supabase
+      .from('vehicle_damage_markers')
+      .select('id')
+      .eq('project_id', projectId);
+
+    if (markers && markers.length > 0) {
+      const markerIds = markers.map(m => m.id);
+      await supabase.from('vehicle_damage_images').delete().in('marker_id', markerIds);
     }
+
+    // 2. Delete damage markers for this project
+    await supabase.from('vehicle_damage_markers').delete().eq('project_id', projectId);
+
+    // 3. Delete frames for this project
+    await supabase.from('vehicle_360_frames').delete().eq('project_id', projectId);
+
+    // 4. Delete 360 project row
+    await supabase.from('vehicle_360_projects').delete().eq('id', projectId);
   },
 
   /**

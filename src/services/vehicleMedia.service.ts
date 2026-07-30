@@ -59,7 +59,7 @@ export const vehicleMediaService = {
       if (imgError) {
         console.error('Error fetching vehicle_images from Supabase:', imgError);
       } else if (dbImages && dbImages.length > 0) {
-        const sorted = [...dbImages].sort((a: any, b: any) => (a.order_index ?? a.display_order ?? 0) - (b.order_index ?? b.display_order ?? 0));
+        const sorted = [...dbImages].sort((a: any, b: any) => (a.display_order ?? 0) - (b.display_order ?? 0));
         result.gallery = sorted.map((img: any) => img.image_url);
         if (!result.cover && result.gallery.length > 0) {
           result.cover = result.gallery[0];
@@ -67,16 +67,24 @@ export const vehicleMediaService = {
       }
 
       // 3. Fetch 360 frames from vehicle_360_frames
-      const { data: db360, error: err360 } = await supabase
-        .from('vehicle_360_frames')
-        .select('*')
-        .eq('vehicle_id', vehicleId);
+      const { data: proj } = await supabase
+        .from('vehicle_360_projects')
+        .select('id')
+        .eq('vehicle_id', vehicleId)
+        .maybeSingle();
 
-      if (err360) {
-        console.error('Error fetching vehicle_360_frames from Supabase:', err360);
-      } else if (db360 && db360.length > 0) {
-        const sorted360 = [...db360].sort((a: any, b: any) => (a.order_index ?? a.frame_index ?? a.display_order ?? 0) - (b.order_index ?? b.frame_index ?? b.display_order ?? 0));
-        result.frames360 = sorted360.map((f: any) => f.image_url || f.frame_url || f.url || '');
+      if (proj?.id) {
+        const { data: db360, error: err360 } = await supabase
+          .from('vehicle_360_frames')
+          .select('*')
+          .eq('project_id', proj.id)
+          .order('frame_number', { ascending: true });
+
+        if (err360) {
+          console.error('Error fetching vehicle_360_frames from Supabase:', err360);
+        } else if (db360 && db360.length > 0) {
+          result.frames360 = db360.map((f: any) => f.image_url || f.frame_url || '');
+        }
       }
 
       // 4. Fetch video from vehicle_videos
@@ -133,10 +141,9 @@ export const vehicleMediaService = {
     }
 
     if (imageUrls.length > 0) {
-      const records = imageUrls.map((url, idx) => ({
+      const records = imageUrls.map((url) => ({
         vehicle_id: vehicleId,
-        image_url: url,
-        order_index: idx
+        image_url: url
       }));
 
       const { error: insError } = await supabase
@@ -154,29 +161,42 @@ export const vehicleMediaService = {
    * Save 360-degree interactive frames
    */
   async save360Frames(vehicleId: string, imageUrls: string[]): Promise<void> {
+    let projectId: string;
+    const { data: proj } = await supabase
+      .from('vehicle_360_projects')
+      .select('id')
+      .eq('vehicle_id', vehicleId)
+      .maybeSingle();
+
+    if (proj?.id) {
+      projectId = proj.id;
+      await supabase
+        .from('vehicle_360_projects')
+        .update({ frame_count: imageUrls.length })
+        .eq('id', projectId);
+    } else {
+      const { data: newP, error: pErr } = await supabase
+        .from('vehicle_360_projects')
+        .insert({ vehicle_id: vehicleId, frame_count: imageUrls.length, status: 'draft' })
+        .select('id')
+        .single();
+      if (pErr || !newP) throw pErr || new Error('Failed to create 360 project');
+      projectId = newP.id;
+    }
+
     // Delete old 360 frames
-    const { error: delError } = await supabase
+    await supabase
       .from('vehicle_360_frames')
       .delete()
-      .eq('vehicle_id', vehicleId);
-
-    if (delError) {
-      console.error('Error deleting old 360 frames:', delError);
-      throw delError;
-    }
+      .eq('project_id', projectId);
 
     if (imageUrls.length > 0) {
       const timestamp = new Date().toISOString();
       const records = imageUrls.map((url, idx) => ({
-        vehicle_id: vehicleId,
+        project_id: projectId,
+        frame_number: idx,
         image_url: url,
-        frame_url: url,
-        url: url,
-        frame_index: idx,
-        order_index: idx,
-        display_order: idx,
-        created_at: timestamp,
-        updated_at: timestamp
+        created_at: timestamp
       }));
 
       const { error: insError } = await supabase

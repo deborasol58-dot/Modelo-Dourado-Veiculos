@@ -43,9 +43,9 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
       for (const car of cars) {
         try {
           const proj = await vehicle360Service.get360ByVehicleId(car.id);
-          statsMap[car.id] = proj ? proj.status : 'Não iniciado';
+          statsMap[car.id] = proj ? proj.status : 'draft';
         } catch {
-          statsMap[car.id] = 'Não iniciado';
+          statsMap[car.id] = 'draft';
         }
       }
       setStatuses(statsMap);
@@ -93,13 +93,13 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
             </div>
             <div className="flex items-center gap-2.5">
               <span className={`px-3 py-1 rounded-full text-xs font-bold uppercase border ${
-                project?.status === 'Ativo' || project?.status === 'Concluído'
+                project?.status === 'completed'
                   ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                  : project?.status === 'Em andamento' || project?.status === 'Em edição'
+                  : project?.status === 'processing'
                   ? 'bg-amber-50 text-amber-700 border-amber-100'
                   : 'bg-slate-50 text-slate-600 border-slate-100'
               }`}>
-                {project ? project.status : 'Não iniciado'}
+                {project ? (project.status === 'completed' ? 'Concluído' : project.status === 'processing' ? 'Em andamento' : 'Não iniciado') : 'Não iniciado'}
               </span>
             </div>
           </div>
@@ -149,8 +149,8 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCars.map(car => {
-            const status = statuses[car.id] || 'Não iniciado';
-            const frameCount = status !== 'Não iniciado' ? 'Disponível' : 'Nenhum';
+            const status = statuses[car.id] || 'draft';
+            const frameCount = status !== 'draft' ? 'Disponível' : 'Nenhum';
 
             return (
               <div 
@@ -159,20 +159,20 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
               >
                 <div className="relative aspect-video bg-slate-100 overflow-hidden">
                   <img 
-                    src={car.images[0]} 
+                    src={car.images[0] || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=800'} 
                     alt={car.model} 
                     className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                     referrerPolicy="no-referrer"
                   />
                   <div className="absolute top-3 right-3">
                     <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase border backdrop-blur-md ${
-                      status === 'Ativo' || status === 'Concluído'
+                      status === 'completed'
                         ? 'bg-emerald-950/80 text-emerald-300 border-emerald-800/50'
-                        : status === 'Em andamento' || status === 'Em edição'
+                        : status === 'processing'
                         ? 'bg-amber-950/80 text-amber-300 border-amber-800/50'
                         : 'bg-slate-950/80 text-slate-300 border-slate-800/50'
                     }`}>
-                      {status}
+                      {status === 'completed' ? 'Concluído' : status === 'processing' ? 'Em andamento' : 'Não iniciado'}
                     </span>
                   </div>
                 </div>
@@ -193,8 +193,8 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
                   <div className="pt-5 border-t border-slate-100 mt-5 flex items-center justify-between">
                     <div className="text-xs">
                       <span className="text-slate-400 block font-medium">Visualização 360°</span>
-                      <span className={`font-bold block ${status !== 'Não iniciado' ? 'text-emerald-600' : 'text-slate-500'}`}>
-                        {status !== 'Não iniciado' ? 'Configurado' : 'Não iniciado'}
+                      <span className={`font-bold block ${status !== 'draft' ? 'text-emerald-600' : 'text-slate-500'}`}>
+                        {status !== 'draft' ? 'Configurado' : 'Não iniciado'}
                       </span>
                     </div>
                     <button
@@ -267,7 +267,7 @@ function Editor360({
 
   // Settings state
   const [framesCount, setFramesCount] = useState<number>(36);
-  const [projectStatus, setProjectStatus] = useState<Vehicle360['status']>('Em andamento');
+  const [projectStatus, setProjectStatus] = useState<Vehicle360['status']>('processing');
 
   // Drag interaction refs for 360 viewer rotation
   const viewerRef = useRef<HTMLDivElement>(null);
@@ -383,7 +383,7 @@ function Editor360({
       const currentImages = [...frames, ...uploadedUrls];
       
       // Auto-update or create project
-      await saveProject(framesCount, currentImages, 'Em andamento');
+      await saveProject(framesCount, currentImages, 'processing');
       setCurrentFrame(0);
     } catch (err) {
       console.error('Error uploading 360 files:', err);
@@ -497,7 +497,7 @@ function Editor360({
           onMouseLeave={handleMouseUp}
           onClick={handleCanvasClick}
         >
-          {frames.length > 0 ? (
+          {frames.length > 0 && frames[currentFrame] ? (
             <div className="w-full h-full relative">
               <img 
                 src={frames[currentFrame]} 
@@ -712,7 +712,7 @@ function Editor360({
                     <button 
                       onClick={() => {
                         if (confirm('Deseja limpar todos os frames deste projeto?')) {
-                          saveProject(framesCount, [], 'Não iniciado');
+                          saveProject(framesCount, [], 'draft');
                         }
                       }}
                       className="text-[10px] text-red-600 hover:text-red-700 font-bold flex items-center gap-1 cursor-pointer bg-red-50 px-2 py-1 rounded"
@@ -1032,8 +1032,12 @@ function Editor360({
                       }}
                       className="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-red-600 bg-white text-slate-700"
                     >
-                      {['Não iniciado', 'Em andamento', 'Concluído', 'Ativo', 'Oculto', 'Em edição'].map(st => (
-                        <option key={st} value={st}>{st}</option>
+                      {[
+                        { value: 'draft', label: 'Não iniciado' },
+                        { value: 'processing', label: 'Em andamento' },
+                        { value: 'completed', label: 'Concluído' }
+                      ].map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
                       ))}
                     </select>
                   </div>

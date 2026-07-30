@@ -21,6 +21,7 @@ import ClientArea from './components/ClientArea';
 // Supabase services and hooks
 import { useVehicles } from './hooks/useVehicles';
 import { useLeads } from './hooks/useLeads';
+import { useCategories } from './hooks/useCategories';
 import { vehicleService } from './services/vehicle.service';
 import { authService } from './services/auth.service';
 
@@ -142,6 +143,8 @@ export default function App() {
     deleteLead 
   } = useLeads();
 
+  const { categories: dbCategories } = useCategories();
+
   // Public Catalog Filter parameters
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<CarCategory | 'Todos'>('Todos');
@@ -203,14 +206,23 @@ export default function App() {
   }, [cars, searchQuery, selectedCategory, selectedBrand]);
 
   // Categories lists with helper icons and description meta
-  const categoriesList: { name: CarCategory; icon: string; count: number }[] = [
-    { name: 'Hatch', icon: '🚗', count: cars.filter(c => c.category === 'Hatch').length },
-    { name: 'SUV', icon: '🚙', count: cars.filter(c => c.category === 'SUV').length },
-    { name: 'Sedan', icon: '🚘', count: cars.filter(c => c.category === 'Sedan').length },
-    { name: 'Picape', icon: '🛻', count: cars.filter(c => c.category === 'Picape').length },
-    { name: 'Utilitário', icon: '🚐', count: cars.filter(c => c.category === 'Utilitário').length },
-    { name: 'Popular', icon: '🏎️', count: cars.filter(c => c.category === 'Popular').length },
-  ];
+  const categoriesList = useMemo(() => {
+    if (dbCategories && dbCategories.length > 0) {
+      return dbCategories.map(cat => ({
+        name: cat.name as CarCategory,
+        icon: cat.icon || '🚗',
+        count: cars.filter(c => c.category === cat.name || c.categoryId === cat.id).length
+      }));
+    }
+    return [
+      { name: 'Hatch' as CarCategory, icon: '🚗', count: cars.filter(c => c.category === 'Hatch').length },
+      { name: 'SUV' as CarCategory, icon: '🚙', count: cars.filter(c => c.category === 'SUV').length },
+      { name: 'Sedan' as CarCategory, icon: '🚘', count: cars.filter(c => c.category === 'Sedan').length },
+      { name: 'Picape' as CarCategory, icon: '🛻', count: cars.filter(c => c.category === 'Picape').length },
+      { name: 'Utilitário' as CarCategory, icon: '🚐', count: cars.filter(c => c.category === 'Utilitário').length },
+      { name: 'Popular' as CarCategory, icon: '🏎️', count: cars.filter(c => c.category === 'Popular').length },
+    ];
+  }, [dbCategories, cars]);
 
   // Action methods: adding, editing and deleting
   const handleAddCar = async (newCar: Car) => {
@@ -506,7 +518,7 @@ export default function App() {
                             <div className="lg:col-span-6">
                               <div className="relative aspect-video rounded-3xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 flex items-center justify-center group cursor-pointer" onClick={() => handleSelectCarDetails(car)}>
                                 <img
-                                  src={car.images[0]}
+                                  src={car.images[0] || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=800'}
                                   alt={`${car.brand} ${car.model}`}
                                   className="w-full h-full object-cover opacity-90 transition-transform duration-700 group-hover:scale-105"
                                   referrerPolicy="no-referrer"

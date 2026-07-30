@@ -20,7 +20,8 @@ export interface Car {
   description: string;
   images: string[];
   features: string[];
-  category: CarCategory;
+  category: CarCategory | string;
+  categoryId?: string;
   isFeatured?: boolean;
   isPromo?: boolean;
   isSold?: boolean;
@@ -95,7 +96,7 @@ export interface Vehicle360 {
   vehicleId: string;
   framesCount: number; // 24, 36, 48, 72, 96
   images: string[];
-  status: 'Não iniciado' | 'Em andamento' | 'Concluído' | 'Ativo' | 'Oculto' | 'Em edição';
+  status: 'draft' | 'processing' | 'completed';
   createdAt: string;
   updatedAt: string;
 }

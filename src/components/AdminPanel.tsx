@@ -18,6 +18,7 @@ import { settingsService, CompanySettings } from '../services/settings.service';
 import { supabase } from '../lib/supabase';
 import Admin360Module from './Admin360Module';
 import { vehicleMediaService } from '../services/vehicleMedia.service';
+import { useCategories } from '../hooks/useCategories';
 
 
 interface AdminPanelProps {
@@ -117,7 +118,9 @@ export default function AdminPanel({
   const [formColor, setFormColor] = useState('');
   const [formPlateEnd, setFormPlateEnd] = useState('');
   const [formDescription, setFormDescription] = useState('');
-  const [formCategory, setFormCategory] = useState<CarCategory>('SUV');
+  const { categories: dbCategories } = useCategories();
+  const [formCategory, setFormCategory] = useState<string>('SUV');
+  const [formCategoryId, setFormCategoryId] = useState<string>('');
   const [formIsFeatured, setFormIsFeatured] = useState(false);
   const [formIsPromo, setFormIsPromo] = useState(false);
   const [formIsSold, setFormIsSold] = useState(false);
@@ -281,8 +284,9 @@ export default function AdminPanel({
       setFormModel(carToEdit.model);
       setFormVersion(carToEdit.version);
       setFormPrice(carToEdit.price || 0);
-      setFormYear(carToEdit.year || '2023/2023');
-      const parts = (carToEdit.year || '2023/2023').split('/');
+      const yearStr = carToEdit.year ? String(carToEdit.year) : '2023';
+      setFormYear(yearStr);
+      const parts = yearStr.split('/');
       setFormYearFabricacao(parts[0] || '2023');
       setFormYearModelo(parts[1] || parts[0] || '2023');
       setFormKm(carToEdit.km);
@@ -291,7 +295,9 @@ export default function AdminPanel({
       setFormColor(carToEdit.color);
       setFormPlateEnd(carToEdit.plateEnd);
       setFormDescription(carToEdit.description);
-      setFormCategory(carToEdit.category);
+      const matchedCat = dbCategories.find(c => c.id === carToEdit.categoryId || c.name === carToEdit.category);
+      setFormCategory(matchedCat?.name || carToEdit.category || 'SUV');
+      setFormCategoryId(matchedCat?.id || carToEdit.categoryId || '');
       setFormIsFeatured(!!carToEdit.isFeatured);
       setFormIsPromo(!!carToEdit.isPromo);
       setFormIsSold(!!carToEdit.isSold);
@@ -329,7 +335,7 @@ export default function AdminPanel({
       setFormModel('');
       setFormVersion('');
       setFormPrice(0);
-      setFormYear('2023/2023');
+      setFormYear('2023');
       setFormYearFabricacao('2023');
       setFormYearModelo('2023');
       setFormKm('');
@@ -338,7 +344,9 @@ export default function AdminPanel({
       setFormColor('');
       setFormPlateEnd('');
       setFormDescription('');
-      setFormCategory('SUV');
+      const defaultCat = dbCategories[0];
+      setFormCategory(defaultCat?.name || 'SUV');
+      setFormCategoryId(defaultCat?.id || '');
       setFormIsFeatured(false);
       setFormIsPromo(false);
       setFormIsSold(false);
@@ -404,6 +412,7 @@ export default function AdminPanel({
       images: images,
       features: features,
       category: formCategory,
+      categoryId: formCategoryId,
       isFeatured: formIsFeatured,
       isPromo: formIsPromo,
       isSold: formIsSold,
@@ -851,7 +860,7 @@ export default function AdminPanel({
                         <td className="px-6 py-4 whitespace-nowrap">
                           <div className="flex items-center gap-3">
                             <img
-                              src={car.images[0]}
+                              src={car.images[0] || 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?auto=format&fit=crop&q=80&w=800'}
                               alt={car.model}
                               className="w-12 sm:w-16 aspect-video object-cover rounded-lg border border-slate-200"
                               referrerPolicy="no-referrer"
@@ -1530,16 +1539,36 @@ export default function AdminPanel({
                         <div>
                           <label className="block text-xs font-bold text-slate-600 mb-1">Categoria</label>
                           <select
-                            value={formCategory}
-                            onChange={(e) => setFormCategory(e.target.value as CarCategory)}
+                            value={formCategoryId || formCategory}
+                            onChange={(e) => {
+                              const selectedVal = e.target.value;
+                              const matched = dbCategories.find(c => c.id === selectedVal || c.name === selectedVal);
+                              if (matched) {
+                                setFormCategoryId(matched.id);
+                                setFormCategory(matched.name);
+                              } else {
+                                setFormCategoryId(selectedVal);
+                                setFormCategory(selectedVal);
+                              }
+                            }}
                             className="w-full border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-red-600"
                           >
-                            <option value="Hatch">Hatch</option>
-                            <option value="SUV">SUV</option>
-                            <option value="Sedan">Sedan</option>
-                            <option value="Picape">Picape</option>
-                            <option value="Utilitário">Utilitário</option>
-                            <option value="Popular">Popular</option>
+                            {dbCategories && dbCategories.length > 0 ? (
+                              dbCategories.map((cat) => (
+                                <option key={cat.id} value={cat.id}>
+                                  {cat.name}
+                                </option>
+                              ))
+                            ) : (
+                              <>
+                                <option value="Hatch">Hatch</option>
+                                <option value="SUV">SUV</option>
+                                <option value="Sedan">Sedan</option>
+                                <option value="Picape">Picape</option>
+                                <option value="Utilitário">Utilitário</option>
+                                <option value="Popular">Popular</option>
+                              </>
+                            )}
                           </select>
                         </div>
                       </div>

@@ -1,33 +1,47 @@
 import { supabase } from '../lib/supabase';
 import { Car, CarCategory } from '../types';
 
+// Helper to parse year strings like "2023/2023" to integer number (e.g. 2023)
+function parseYear(yearVal: any): number {
+  if (typeof yearVal === 'number') return Math.floor(yearVal);
+  if (!yearVal) return new Date().getFullYear();
+  const str = String(yearVal).trim();
+  const firstPart = str.split('/')[0].trim();
+  const parsed = parseInt(firstPart, 10);
+  return isNaN(parsed) ? new Date().getFullYear() : parsed;
+}
+
 // Helper to map DB vehicle format to frontend Car format
 export function mapDbToCar(v: any): Car {
   let images: string[] = [];
   if (v.vehicle_images && v.vehicle_images.length > 0) {
     images = [...v.vehicle_images]
-      .sort((a: any, b: any) => (a.order_index ?? a.display_order ?? 0) - (b.order_index ?? b.display_order ?? 0))
+      .sort((a: any, b: any) => (a.display_order ?? 0) - (b.display_order ?? 0))
       .map((img: any) => img.image_url);
   } else if (v.cover_image) {
     images = [v.cover_image];
   }
+
+  const categoryName = v.categories?.name || (typeof v.category === 'string' ? v.category : 'SUV');
+  const categoryUuid = v.category_id || v.categories?.id;
 
   return {
     id: v.id,
     brand: v.brand,
     model: v.model,
     version: v.version || '',
-    price: Number(v.price),
+    price: Number(v.price || 0),
     year: v.year,
     km: Number(v.mileage || 0),
     gearbox: v.transmission || 'Manual',
     fuel: v.fuel || 'Flex',
     color: v.color || 'Branco',
-    plateEnd: '9',
+    plateEnd: v.plate_final || '9',
     description: v.description || '',
     images: images,
     features: v.vehicle_features ? v.vehicle_features.map((f: any) => f.feature) : [],
-    category: ((v.category || v.category_id) as CarCategory) || 'SUV',
+    category: categoryName as CarCategory,
+    categoryId: categoryUuid,
     isFeatured: !!v.featured,
     isPromo: !!v.new_price,
     isSold: !!v.sold || v.status === 'Vendido',
@@ -77,7 +91,7 @@ export const vehicleService = {
   async getVehicles(): Promise<Car[]> {
     const { data, error } = await supabase
       .from('vehicles')
-      .select('*, vehicle_images(*), vehicle_features(*)');
+      .select('*, categories(*), vehicle_images(*), vehicle_features(*)');
 
     if (error) {
       throw parseSupabaseError(error, 'carregar a lista de veículos');
@@ -94,7 +108,7 @@ export const vehicleService = {
 
     const { data, error } = await supabase
       .from('vehicles')
-      .select('*, vehicle_images(*), vehicle_features(*)')
+      .select('*, categories(*), vehicle_images(*), vehicle_features(*)')
       .eq('id', id)
       .maybeSingle();
 
@@ -108,23 +122,38 @@ export const vehicleService = {
   },
 
   async createVehicle(car: Omit<Car, 'id'>): Promise<Car> {
-    // 1. Insert vehicle row
+    let categoryId = car.categoryId;
+
+    if (!categoryId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(categoryId)) {
+      if (car.category) {
+        const { data: catRow } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('name', car.category)
+          .maybeSingle();
+        if (catRow?.id) {
+          categoryId = catRow.id;
+        }
+      }
+    }
+
+    // 1. Insert vehicle row (using category_id, no category text column)
     const { data: vehicle, error: vError } = await supabase
       .from('vehicles')
       .insert({
         brand: car.brand,
         model: car.model,
         version: car.version,
-        year: car.year,
+        year: parseYear(car.year),
         price: car.price,
         mileage: car.km,
         fuel: car.fuel,
         transmission: car.gearbox,
         color: car.color,
         description: car.description,
-        category: car.category,
+        category_id: categoryId || null,
         featured: !!car.isFeatured,
-        new_price: car.isPromo ? car.price : null,
+        new_price: !!car.isPromo,
         sold: !!car.isSold,
         status: car.isSold ? 'Vendido' : 'Disponível',
         views: car.views || 0,
@@ -140,12 +169,11 @@ export const vehicleService = {
 
     const vehicleId = vehicle.id;
 
-    // 2. Insert image URLs associated
+    // 2. Insert image URLs associated (no order_index column in vehicle_images)
     if (car.images && car.images.length > 0) {
-      const imageRecords = car.images.map((url, idx) => ({
+      const imageRecords = car.images.map((url) => ({
         vehicle_id: vehicleId,
-        image_url: url,
-        order_index: idx
+        image_url: url
       }));
       const { error: imgErr } = await supabase.from('vehicle_images').insert(imageRecords);
       if (imgErr) {
@@ -183,16 +211,33 @@ export const vehicleService = {
     if (car.brand !== undefined) dbData.brand = car.brand;
     if (car.model !== undefined) dbData.model = car.model;
     if (car.version !== undefined) dbData.version = car.version;
-    if (car.year !== undefined) dbData.year = car.year;
+    if (car.year !== undefined) dbData.year = parseYear(car.year);
     if (car.price !== undefined) dbData.price = car.price;
     if (car.km !== undefined) dbData.mileage = car.km;
     if (car.fuel !== undefined) dbData.fuel = car.fuel;
     if (car.gearbox !== undefined) dbData.transmission = car.gearbox;
     if (car.color !== undefined) dbData.color = car.color;
     if (car.description !== undefined) dbData.description = car.description;
-    if (car.category !== undefined) dbData.category = car.category;
+
+    if (car.categoryId) {
+      dbData.category_id = car.categoryId;
+    } else if (car.category) {
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(car.category)) {
+        dbData.category_id = car.category;
+      } else {
+        const { data: catRow } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('name', car.category)
+          .maybeSingle();
+        if (catRow?.id) {
+          dbData.category_id = catRow.id;
+        }
+      }
+    }
+
     if (car.isFeatured !== undefined) dbData.featured = car.isFeatured;
-    if (car.isPromo !== undefined) dbData.new_price = car.isPromo ? (car.price || 50000) : null;
+    if (car.isPromo !== undefined) dbData.new_price = !!car.isPromo;
     if (car.isSold !== undefined) {
       dbData.sold = car.isSold;
       dbData.status = car.isSold ? 'Vendido' : 'Disponível';
@@ -213,14 +258,13 @@ export const vehicleService = {
       throw parseSupabaseError(vError, `atualizar o veículo ${id}`);
     }
 
-    // 2. Refresh images if provided
+    // 2. Refresh images if provided (no order_index column in vehicle_images)
     if (car.images !== undefined) {
       await supabase.from('vehicle_images').delete().eq('vehicle_id', id);
       if (car.images.length > 0) {
-        const imageRecords = car.images.map((url, idx) => ({
+        const imageRecords = car.images.map((url) => ({
           vehicle_id: id,
-          image_url: url,
-          order_index: idx
+          image_url: url
         }));
         await supabase.from('vehicle_images').insert(imageRecords);
       }
