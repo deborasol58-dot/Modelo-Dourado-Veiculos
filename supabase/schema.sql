@@ -45,7 +45,9 @@ create table if not exists vehicle_images (
   id uuid default gen_random_uuid() primary key,
   vehicle_id uuid references vehicles(id) on delete cascade not null,
   image_url text not null,
+  image_type text default 'gallery', -- 'cover', 'gallery', '360'
   order_index integer default 0,
+  display_order integer default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
@@ -98,7 +100,16 @@ create table if not exists vehicle_damage_images (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 8. Create LEADS Table
+-- 8. Create VEHICLE_VIDEOS Table
+create table if not exists vehicle_videos (
+  id uuid default gen_random_uuid() primary key,
+  vehicle_id uuid references vehicles(id) on delete cascade not null,
+  video_url text not null,
+  provider text default 'youtube', -- 'upload', 'youtube'
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 9. Create LEADS Table
 create table if not exists leads (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -198,6 +209,7 @@ alter table vehicle_features enable row level security;
 alter table vehicle_hotspots enable row level security;
 alter table vehicle_360_frames enable row level security;
 alter table vehicle_damage_images enable row level security;
+alter table vehicle_videos enable row level security;
 alter table leads enable row level security;
 alter table quotes enable row level security;
 alter table schedules enable row level security;
@@ -213,6 +225,7 @@ create policy "Allow public read access to vehicle_features" on vehicle_features
 create policy "Allow public read access to vehicle_hotspots" on vehicle_hotspots for select using (true);
 create policy "Allow public read access to vehicle_360_frames" on vehicle_360_frames for select using (true);
 create policy "Allow public read access to vehicle_damage_images" on vehicle_damage_images for select using (true);
+create policy "Allow public read access to vehicle_videos" on vehicle_videos for select using (true);
 create policy "Allow public read access to settings" on settings for select using (true);
 
 -- Allow public insert to leads, quotes, schedules, and favorites
@@ -253,6 +266,10 @@ create policy "Allow public delete vehicle_360_frames" on vehicle_360_frames for
 create policy "Allow public insert vehicle_damage_images" on vehicle_damage_images for insert with check (true);
 create policy "Allow public update vehicle_damage_images" on vehicle_damage_images for update using (true);
 create policy "Allow public delete vehicle_damage_images" on vehicle_damage_images for delete using (true);
+
+create policy "Allow public insert vehicle_videos" on vehicle_videos for insert with check (true);
+create policy "Allow public update vehicle_videos" on vehicle_videos for update using (true);
+create policy "Allow public delete vehicle_videos" on vehicle_videos for delete using (true);
 
 create policy "Allow public manage settings" on settings for all using (true);
 create policy "Allow public manage admins" on admins for all using (true);

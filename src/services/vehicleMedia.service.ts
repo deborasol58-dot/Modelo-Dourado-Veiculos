@@ -37,99 +37,49 @@ export const vehicleMediaService = {
     };
 
     try {
-      // 1. Fetch images from vehicle_images
+      // 1. Fetch cover and basic vehicle info
+      const { data: vehicle, error: vError } = await supabase
+        .from('vehicles')
+        .select('cover_image')
+        .eq('id', vehicleId)
+        .maybeSingle();
+
+      if (vError) {
+        console.error('Error fetching vehicle cover:', vError);
+      } else if (vehicle?.cover_image) {
+        result.cover = vehicle.cover_image;
+      }
+
+      // 2. Fetch images from vehicle_images
       const { data: dbImages, error: imgError } = await supabase
         .from('vehicle_images')
         .select('*')
         .eq('vehicle_id', vehicleId);
 
-      if (!imgError && dbImages && dbImages.length > 0) {
-        // Check if database columns image_type and display_order are available
-        const hasNewColumns = 'image_type' in dbImages[0];
-
-        if (hasNewColumns) {
-          // Sort by display_order
-          const sorted = [...dbImages].sort((a: any, b: any) => (a.display_order || 0) - (b.display_order || 0));
-          
-          const coverImg = sorted.find((img: any) => img.image_type === 'cover');
-          if (coverImg) {
-            result.cover = coverImg.image_url;
-          }
-          
-          result.gallery = sorted
-            .filter((img: any) => img.image_type === 'gallery')
-            .map((img: any) => img.image_url);
-
-          result.frames360 = sorted
-            .filter((img: any) => img.image_type === '360')
-            .map((img: any) => img.image_url);
-        } else {
-          // Fallback parsing (using the classic vehicle_images with order_index)
-          // We can determine types by URL path prefix or assume they are all gallery
-          const sorted = [...dbImages].sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0));
-          result.gallery = sorted.map((img: any) => img.image_url);
-          
-          // Fallback cover image from vehicles table
-          const { data: vehicle } = await supabase
-            .from('vehicles')
-            .select('cover_image')
-            .eq('id', vehicleId)
-            .maybeSingle();
-            
-          if (vehicle?.cover_image) {
-            result.cover = vehicle.cover_image;
-          } else if (result.gallery.length > 0) {
-            result.cover = result.gallery[0];
-          }
-
-          // Fallback 360 frames from vehicle_360 table
-          const { data: v360 } = await supabase
-            .from('vehicle_360')
-            .select('images')
-            .eq('vehicle_id', vehicleId)
-            .maybeSingle();
-
-          if (v360?.images) {
-            try {
-              result.frames360 = Array.isArray(v360.images) 
-                ? v360.images 
-                : JSON.parse(v360.images || '[]');
-            } catch {
-              result.frames360 = [];
-            }
-          }
-        }
-      } else {
-        // If no images in vehicle_images, try fallback directly from vehicles and vehicle_360
-        const { data: vehicle } = await supabase
-          .from('vehicles')
-          .select('cover_image')
-          .eq('id', vehicleId)
-          .maybeSingle();
-
-        if (vehicle?.cover_image) {
-          result.cover = vehicle.cover_image;
-          result.gallery = [vehicle.cover_image];
-        }
-        
-        const { data: v360 } = await supabase
-          .from('vehicle_360')
-          .select('images')
-          .eq('vehicle_id', vehicleId)
-          .maybeSingle();
-
-        if (v360?.images) {
-          try {
-            result.frames360 = Array.isArray(v360.images) 
-              ? v360.images 
-              : JSON.parse(v360.images || '[]');
-          } catch {
-            result.frames360 = [];
-          }
+      if (imgError) {
+        console.error('Error fetching vehicle_images from Supabase:', imgError);
+      } else if (dbImages && dbImages.length > 0) {
+        const sorted = [...dbImages].sort((a: any, b: any) => (a.order_index ?? a.display_order ?? 0) - (b.order_index ?? b.display_order ?? 0));
+        result.gallery = sorted.map((img: any) => img.image_url);
+        if (!result.cover && result.gallery.length > 0) {
+          result.cover = result.gallery[0];
         }
       }
 
-      // 2. Fetch video from vehicle_videos
+      // 3. Fetch 360 frames from vehicle_360_frames
+      const { data: db360, error: err360 } = await supabase
+        .from('vehicle_360_frames')
+        .select('*')
+        .eq('vehicle_id', vehicleId);
+
+      if (err360) {
+        console.error('Error fetching vehicle_360_frames from Supabase:', err360);
+      } else if (db360 && db360.length > 0) {
+        const sorted360 = [...db360].sort((a: any, b: any) => (a.order_index ?? a.frame_index ?? a.display_order ?? 0) - (b.order_index ?? b.frame_index ?? b.display_order ?? 0));
+        result.frames360 = sorted360.map((f: any) => f.image_url || f.frame_url || f.url || '');
+      }
+
+      // 4. Fetch video from vehicle_videos
       const { data: dbVideos, error: vidError } = await supabase
         .from('vehicle_videos')
         .select('*')
@@ -156,42 +106,14 @@ export const vehicleMediaService = {
    * Save Cover Photo
    */
   async saveCover(vehicleId: string, coverUrl: string): Promise<void> {
-    try {
-      // 1. Update the vehicles cover_image for sync compatibility
-      await supabase
-        .from('vehicles')
-        .update({ cover_image: coverUrl })
-        .eq('id', vehicleId);
+    const { error } = await supabase
+      .from('vehicles')
+      .update({ cover_image: coverUrl })
+      .eq('id', vehicleId);
 
-      // 2. Check if we can save to vehicle_images with cover type
-      const { error } = await supabase
-        .from('vehicle_images')
-        .delete()
-        .eq('vehicle_id', vehicleId)
-        .eq('image_type', 'cover');
-
-      // Add to vehicle_images as cover
-      await supabase
-        .from('vehicle_images')
-        .insert({
-          vehicle_id: vehicleId,
-          image_url: coverUrl,
-          image_type: 'cover',
-          display_order: 0
-        });
-    } catch {
-      // Robust fallback if column/type fails: insert standard record
-      try {
-        await supabase
-          .from('vehicle_images')
-          .insert({
-            vehicle_id: vehicleId,
-            image_url: coverUrl,
-            order_index: -1 // special index for cover photo fallback
-          });
-      } catch (err) {
-        console.error('Failed cover save fallback:', err);
-      }
+    if (error) {
+      console.error('Error updating cover_image on vehicles:', error);
+      throw error;
     }
   },
 
@@ -199,53 +121,31 @@ export const vehicleMediaService = {
    * Save Gallery Images
    */
   async saveGallery(vehicleId: string, imageUrls: string[]): Promise<void> {
-    try {
-      // Delete old gallery images
-      try {
-        await supabase
-          .from('vehicle_images')
-          .delete()
-          .eq('vehicle_id', vehicleId)
-          .eq('image_type', 'gallery');
-      } catch {
-        // Classic fallback: delete all, since we didn't have types
-        await supabase
-          .from('vehicle_images')
-          .delete()
-          .eq('vehicle_id', vehicleId);
-      }
+    // Delete old gallery images
+    const { error: delError } = await supabase
+      .from('vehicle_images')
+      .delete()
+      .eq('vehicle_id', vehicleId);
 
-      if (imageUrls.length > 0) {
-        // Try inserting with new columns
-        const { error } = await supabase
-          .from('vehicle_images')
-          .insert(
-            imageUrls.map((url, idx) => ({
-              vehicle_id: vehicleId,
-              image_url: url,
-              image_type: 'gallery',
-              display_order: idx
-            }))
-          );
+    if (delError) {
+      console.error('Error deleting old vehicle_images:', delError);
+      throw delError;
+    }
 
-        if (error) throw error;
-      }
-    } catch {
-      // Fallback: save using classic order_index
-      try {
-        if (imageUrls.length > 0) {
-          await supabase
-            .from('vehicle_images')
-            .insert(
-              imageUrls.map((url, idx) => ({
-                vehicle_id: vehicleId,
-                image_url: url,
-                order_index: idx
-              }))
-            );
-        }
-      } catch (err) {
-        console.error('Failed gallery save fallback:', err);
+    if (imageUrls.length > 0) {
+      const records = imageUrls.map((url, idx) => ({
+        vehicle_id: vehicleId,
+        image_url: url,
+        order_index: idx
+      }));
+
+      const { error: insError } = await supabase
+        .from('vehicle_images')
+        .insert(records);
+
+      if (insError) {
+        console.error('Error inserting vehicle_images:', insError);
+        throw insError;
       }
     }
   },
@@ -254,60 +154,39 @@ export const vehicleMediaService = {
    * Save 360-degree interactive frames
    */
   async save360Frames(vehicleId: string, imageUrls: string[]): Promise<void> {
-    try {
-      // 1. Delete old 360 images from vehicle_images
-      try {
-        await supabase
-          .from('vehicle_images')
-          .delete()
-          .eq('vehicle_id', vehicleId)
-          .eq('image_type', '360');
-      } catch {}
+    // Delete old 360 frames
+    const { error: delError } = await supabase
+      .from('vehicle_360_frames')
+      .delete()
+      .eq('vehicle_id', vehicleId);
 
-      if (imageUrls.length > 0) {
-        // 2. Try inserting into vehicle_images with '360' type
-        await supabase
-          .from('vehicle_images')
-          .insert(
-            imageUrls.map((url, idx) => ({
-              vehicle_id: vehicleId,
-              image_url: url,
-              image_type: '360',
-              display_order: idx
-            }))
-          );
-      }
+    if (delError) {
+      console.error('Error deleting old 360 frames:', delError);
+      throw delError;
+    }
 
-      // 3. For backwards compatibility and the interactive module, also update the vehicle_360 table
-      const { data: existing } = await supabase
-        .from('vehicle_360')
-        .select('id')
-        .eq('vehicle_id', vehicleId)
-        .maybeSingle();
-
-      const dbRow = {
+    if (imageUrls.length > 0) {
+      const timestamp = new Date().toISOString();
+      const records = imageUrls.map((url, idx) => ({
         vehicle_id: vehicleId,
-        frames_count: imageUrls.length,
-        images: imageUrls,
-        status: 'Ativo',
-        updated_at: new Date().toISOString()
-      };
+        image_url: url,
+        frame_url: url,
+        url: url,
+        frame_index: idx,
+        order_index: idx,
+        display_order: idx,
+        created_at: timestamp,
+        updated_at: timestamp
+      }));
 
-      if (existing?.id) {
-        await supabase
-          .from('vehicle_360')
-          .update(dbRow)
-          .eq('id', existing.id);
-      } else {
-        await supabase
-          .from('vehicle_360')
-          .insert({
-            ...dbRow,
-            created_at: new Date().toISOString()
-          });
+      const { error: insError } = await supabase
+        .from('vehicle_360_frames')
+        .insert(records);
+
+      if (insError) {
+        console.error('Error inserting vehicle_360_frames:', insError);
+        throw insError;
       }
-    } catch (err) {
-      console.warn('Error saving 360 frames to DB:', err);
     }
   },
 

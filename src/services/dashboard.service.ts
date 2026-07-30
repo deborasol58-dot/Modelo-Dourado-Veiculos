@@ -24,19 +24,8 @@ export const dashboardService = {
       .select('status');
 
     if (vError || lError) {
-      console.warn('Dashboard service query encountered an error:', vError || lError);
-      return {
-        totalCars: 0,
-        availableCount: 0,
-        soldCount: 0,
-        reservedCount: 0,
-        totalLeads: 0,
-        unreadLeads: 0,
-        whatsappCount: 0,
-        featuredCount: 0,
-        totalStockValue: 0,
-        mostViewed: 0
-      };
+      console.error('Dashboard service query encountered an error:', vError || lError);
+      throw vError || lError;
     }
 
     const totalCars = vehicles?.length || 0;

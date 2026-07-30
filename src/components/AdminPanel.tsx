@@ -2471,17 +2471,19 @@ export default function AdminPanel({
                         role: editUserRole,
                         isActive: editUserIsActive,
                       };
-                      // Save profile to Firestore/Supa
-                      const { error } = await supabase
-                        .from('profiles')
-                        .update({
-                          name: editUserName,
-                          phone: editUserPhone,
-                          city: editUserCity,
-                          role: editUserRole,
-                          is_active: editUserIsActive,
-                        })
-                        .eq('id', editingUser.id);
+                      // Save to Supabase admins table if UUID
+                      if (!editingUser.id.startsWith('anon-')) {
+                        const { error } = await supabase
+                          .from('admins')
+                          .upsert({
+                            id: editingUser.id,
+                            name: editUserName,
+                            role: editUserRole,
+                          });
+                        if (error) {
+                          console.error('Error updating admin role in Supabase:', error);
+                        }
+                      }
 
                       // Update local states
                       setUsersList(prev => prev.map(u => u.id === editingUser.id ? updatedUser : u));

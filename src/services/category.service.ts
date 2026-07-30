@@ -16,17 +16,16 @@ export const categoryService = {
       .order('order', { ascending: true });
 
     if (error) {
-      console.warn('Error fetching categories from Supabase, returning fallbacks:', error);
-      return [
-        { id: 'cat-1', name: 'Hatch', icon: '🚗', color: 'bg-blue-500', order: 1 },
-        { id: 'cat-2', name: 'SUV', icon: '🚙', color: 'bg-green-500', order: 2 },
-        { id: 'cat-3', name: 'Sedan', icon: '🚘', color: 'bg-indigo-500', order: 3 },
-        { id: 'cat-4', name: 'Picape', icon: '🛻', color: 'bg-amber-500', order: 4 },
-        { id: 'cat-5', name: 'Utilitário', icon: '🚐', color: 'bg-purple-500', order: 5 },
-        { id: 'cat-6', name: 'Popular', icon: '🏎️', color: 'bg-red-500', order: 6 },
-      ] as Category[];
+      console.error('Error fetching categories from Supabase:', error);
+      throw error;
     }
 
-    return data as Category[];
+    return (data || []).map((c: any) => ({
+      id: c.id,
+      name: c.name,
+      icon: c.icon || '🚗',
+      color: c.color || 'bg-blue-500',
+      order: Number(c.order ?? c.display_order ?? 0)
+    }));
   }
 };

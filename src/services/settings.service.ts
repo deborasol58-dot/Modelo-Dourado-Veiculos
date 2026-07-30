@@ -19,7 +19,7 @@ export const settingsService = {
     const { data, error } = await supabase
       .from('settings')
       .select('*')
-      .eq('id', 'default')
+      .limit(1)
       .maybeSingle();
 
     if (error) {
@@ -40,6 +40,7 @@ export const settingsService = {
     }
 
     return {
+      id: data.id,
       companyName: data.company_name || 'Dourado Veículos',
       logo: data.logo,
       phone: data.phone || '(11) 99999-9999',
@@ -47,7 +48,7 @@ export const settingsService = {
       instagram: data.instagram,
       facebook: data.facebook,
       address: data.address || 'Av. Paulista, 1000 - São Paulo, SP',
-      hours: data.hours || 'Segunda a Sexta: 9h às 18h | Sábado: 9h às 13h',
+      hours: data.hours || data.opening_hours || 'Segunda a Sexta: 9h às 18h | Sábado: 9h às 13h',
       primaryColor: data.primary_color || '#ef4444',
       secondaryColor: data.secondary_color || '#0f172a'
     };
@@ -62,15 +63,36 @@ export const settingsService = {
     if (settings.instagram !== undefined) dbData.instagram = settings.instagram;
     if (settings.facebook !== undefined) dbData.facebook = settings.facebook;
     if (settings.address !== undefined) dbData.address = settings.address;
-    if (settings.hours !== undefined) dbData.hours = settings.hours;
+    if (settings.hours !== undefined) {
+      dbData.hours = settings.hours;
+    }
     if (settings.primaryColor !== undefined) dbData.primary_color = settings.primaryColor;
     if (settings.secondaryColor !== undefined) dbData.secondary_color = settings.secondaryColor;
 
-    const { data, error } = await supabase
+    // Fetch existing settings row to obtain UUID if present
+    const { data: existing } = await supabase
       .from('settings')
-      .upsert({ id: 'default', ...dbData })
-      .select()
-      .single();
+      .select('id')
+      .limit(1)
+      .maybeSingle();
+
+    let query;
+    if (existing?.id) {
+      query = supabase
+        .from('settings')
+        .update(dbData)
+        .eq('id', existing.id)
+        .select()
+        .single();
+    } else {
+      query = supabase
+        .from('settings')
+        .insert(dbData)
+        .select()
+        .single();
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       console.error('Error updating settings in Supabase:', error);

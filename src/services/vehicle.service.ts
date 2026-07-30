@@ -6,7 +6,7 @@ export function mapDbToCar(v: any): Car {
   let images: string[] = [];
   if (v.vehicle_images && v.vehicle_images.length > 0) {
     images = [...v.vehicle_images]
-      .sort((a: any, b: any) => (a.order_index || 0) - (b.order_index || 0))
+      .sort((a: any, b: any) => (a.order_index ?? a.display_order ?? 0) - (b.order_index ?? b.display_order ?? 0))
       .map((img: any) => img.image_url);
   } else if (v.cover_image) {
     images = [v.cover_image];
@@ -27,7 +27,7 @@ export function mapDbToCar(v: any): Car {
     description: v.description || '',
     images: images,
     features: v.vehicle_features ? v.vehicle_features.map((f: any) => f.feature) : [],
-    category: (v.category as CarCategory) || 'SUV',
+    category: ((v.category || v.category_id) as CarCategory) || 'SUV',
     isFeatured: !!v.featured,
     isPromo: !!v.new_price,
     isSold: !!v.sold || v.status === 'Vendido',
