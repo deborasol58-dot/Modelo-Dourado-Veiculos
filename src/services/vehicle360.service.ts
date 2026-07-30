@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { Vehicle360, DamageMarker } from '../types';
+import { parseMarkerPositions, encodeMarkerDescription } from '../utils/markerUtils';
 
 // Helper to check if a string is a UUID
 const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -216,18 +217,30 @@ export const vehicle360Service = {
       return [];
     }
 
-    return markers.map((m: any) => ({
-      id: m.id,
-      vehicleId,
-      title: m.title || 'Dano',
-      description: m.description || '',
-      category: m.category || 'Outro',
-      damageImages: (m.vehicle_damage_images || []).map((img: any) => img.image_url || ''),
-      frameIndex: Number(m.frame_number ?? 0),
-      posX: Number(m.pos_x ?? 0),
-      posY: Number(m.pos_y ?? 0),
-      createdAt: m.created_at
-    }));
+    return markers.map((m: any) => {
+      const { cleanDescription, framePositions } = parseMarkerPositions(m.description || '', m.frame_positions);
+      const frameIndex = Number(m.frame_number ?? 0);
+      const posX = Number(m.pos_x ?? 0);
+      const posY = Number(m.pos_y ?? 0);
+
+      if (framePositions[frameIndex] === undefined) {
+        framePositions[frameIndex] = { posX, posY };
+      }
+
+      return {
+        id: m.id,
+        vehicleId,
+        title: m.title || 'Dano',
+        description: cleanDescription,
+        category: m.category || 'Outro',
+        damageImages: (m.vehicle_damage_images || []).map((img: any) => img.image_url || ''),
+        frameIndex,
+        posX,
+        posY,
+        framePositions,
+        createdAt: m.created_at
+      };
+    });
   },
 
   /**
@@ -261,46 +274,29 @@ export const vehicle360Service = {
       projectId = newProj.id;
     }
 
-    // 2. Upsert marker in vehicle_damage_markers
-    const markerPayload = {
+    // 2. Upsert marker in vehicle_damage_markers safely
+    const encodedDescription = encodeMarkerDescription(marker.description, marker.framePositions);
+
+    const markerPayload: any = {
       project_id: projectId,
       title: marker.title,
-      description: marker.description,
+      description: encodedDescription,
       category: marker.category,
       frame_number: marker.frameIndex,
       pos_x: marker.posX,
-      pos_y: marker.posY
+      pos_y: marker.posY,
+      frame_positions: marker.framePositions ? JSON.stringify(marker.framePositions) : null
     };
 
     let markerId = marker.id;
     let savedMarker: any;
 
-    if (markerId && isUuid(markerId)) {
-      const { data, error } = await supabase
-        .from('vehicle_damage_markers')
-        .update(markerPayload)
-        .eq('id', markerId)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error updating vehicle_damage_markers:', error);
-        throw error;
-      }
-      savedMarker = data;
-    } else {
-      const { data, error } = await supabase
-        .from('vehicle_damage_markers')
-        .insert(markerPayload)
-        .select()
-        .single();
-
-      if (error) {
-        console.error('Error inserting vehicle_damage_markers:', error);
-        throw error;
-      }
-      savedMarker = data;
+    try {
+      savedMarker = await safeInsertOrUpdate('vehicle_damage_markers', markerId, markerPayload);
       markerId = savedMarker.id;
+    } catch (error) {
+      console.error('Error saving vehicle_damage_markers:', error);
+      throw error;
     }
 
     // 3. Save images in vehicle_damage_images using marker_id
@@ -320,16 +316,19 @@ export const vehicle360Service = {
       }
     }
 
+    const { cleanDescription, framePositions } = parseMarkerPositions(savedMarker.description || '', savedMarker.frame_positions);
+
     return {
       id: markerId!,
       vehicleId: marker.vehicleId,
       title: savedMarker.title || 'Dano',
-      description: savedMarker.description || '',
+      description: cleanDescription,
       category: savedMarker.category || 'Outro',
       damageImages: savedImages,
       frameIndex: Number(savedMarker.frame_number ?? 0),
       posX: Number(savedMarker.pos_x ?? 0),
       posY: Number(savedMarker.pos_y ?? 0),
+      framePositions: marker.framePositions || framePositions,
       createdAt: savedMarker.created_at || new Date().toISOString()
     };
   },

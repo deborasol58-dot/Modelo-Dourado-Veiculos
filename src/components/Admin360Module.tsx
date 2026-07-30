@@ -7,6 +7,7 @@ import {
 import { Car as CarType, Vehicle360, DamageMarker, DamageCategory } from '../types';
 import { useVehicle360 } from '../hooks/useVehicle360';
 import { vehicle360Service } from '../services/vehicle360.service';
+import { getMarkerPositionForFrame } from '../utils/markerUtils';
 
 interface Admin360ModuleProps {
   cars: CarType[];
@@ -256,6 +257,7 @@ function Editor360({
 
   // Selected marker state for details view/edit
   const [selectedMarker, setSelectedMarker] = useState<DamageMarker | null>(null);
+  const [isRepositioning, setIsRepositioning] = useState(false);
 
   // Hotspot Marker placement state
   const [newMarkerPos, setNewMarkerPos] = useState<{ x: number; y: number } | null>(null);
@@ -323,16 +325,81 @@ function Editor360({
     isDragging.current = false;
   };
 
-  // Handle clicking canvas for marker placement
-  const handleCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!addMarkerMode || frames.length === 0) return;
+  // Handle clicking canvas for marker placement or re-positioning
+  const handleCanvasClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (frames.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10;
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10;
 
-    setNewMarkerPos({ x, y });
-    setAddMarkerMode(false);
-    setSelectedMarker(null);
+    if (addMarkerMode) {
+      setNewMarkerPos({ x, y });
+      setAddMarkerMode(false);
+      setSelectedMarker(null);
+      setIsRepositioning(false);
+      return;
+    }
+
+    if (isRepositioning && selectedMarker) {
+      await handleSetFramePosition(x, y);
+    }
+  };
+
+  const handleSetFramePosition = async (x: number, y: number) => {
+    if (!selectedMarker) return;
+
+    const existingPositions = selectedMarker.framePositions || {
+      [selectedMarker.frameIndex]: { posX: selectedMarker.posX, posY: selectedMarker.posY }
+    };
+
+    const updatedPositions = {
+      ...existingPositions,
+      [currentFrame]: { posX: x, posY: y }
+    };
+
+    try {
+      const saved = await saveMarker({
+        id: selectedMarker.id,
+        vehicleId: selectedMarker.vehicleId,
+        title: selectedMarker.title,
+        description: selectedMarker.description,
+        category: selectedMarker.category,
+        damageImages: selectedMarker.damageImages,
+        frameIndex: selectedMarker.frameIndex,
+        posX: selectedMarker.posX,
+        posY: selectedMarker.posY,
+        framePositions: updatedPositions
+      });
+      setSelectedMarker(saved);
+      setIsRepositioning(false);
+    } catch (err) {
+      console.error('Error saving frame position:', err);
+    }
+  };
+
+  const handleRemoveFramePosition = async (frameIdxToRemove: number) => {
+    if (!selectedMarker) return;
+
+    const existingPositions = { ...(selectedMarker.framePositions || {}) };
+    delete existingPositions[frameIdxToRemove];
+
+    try {
+      const saved = await saveMarker({
+        id: selectedMarker.id,
+        vehicleId: selectedMarker.vehicleId,
+        title: selectedMarker.title,
+        description: selectedMarker.description,
+        category: selectedMarker.category,
+        damageImages: selectedMarker.damageImages,
+        frameIndex: selectedMarker.frameIndex,
+        posX: selectedMarker.posX,
+        posY: selectedMarker.posY,
+        framePositions: existingPositions
+      });
+      setSelectedMarker(saved);
+    } catch (err) {
+      console.error('Error removing frame position:', err);
+    }
   };
 
   // File Upload drag/drop handlers
@@ -426,7 +493,10 @@ function Editor360({
         damageImages: damageImages,
         frameIndex: currentFrame,
         posX: newMarkerPos.x,
-        posY: newMarkerPos.y
+        posY: newMarkerPos.y,
+        framePositions: {
+          [currentFrame]: { posX: newMarkerPos.x, posY: newMarkerPos.y }
+        }
       });
 
       // Reset
@@ -477,15 +547,14 @@ function Editor360({
     }
   };
 
-  // Marker visibility range constant (strict linear distance to avoid opposite-side ghost markers)
-  const MARKER_VISIBILITY_RANGE = 2;
-  
   const activeMarkers = useMemo(() => {
     if (!frames.length) return [];
-    return markers.filter(m => {
-      const diff = Math.abs(currentFrame - m.frameIndex);
-      return diff <= MARKER_VISIBILITY_RANGE;
-    });
+    return markers
+      .map(m => ({
+        marker: m,
+        posInfo: getMarkerPositionForFrame(m, currentFrame)
+      }))
+      .filter(item => item.posInfo.isVisible);
   }, [markers, currentFrame, frames.length]);
 
   return (
@@ -513,19 +582,20 @@ function Editor360({
               />
 
               {/* Marker Circles overlays */}
-              {activeMarkers.map(marker => (
+              {activeMarkers.map(({ marker, posInfo }) => (
                 <button
                   key={marker.id}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedMarker(marker);
                     setNewMarkerPos(null);
+                    setIsRepositioning(false);
                     setActiveTab('marcadores');
                   }}
                   className={`absolute w-7 h-7 bg-red-600 hover:bg-red-700 text-white font-bold rounded-full border-2 border-white shadow-lg flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 transition-transform hover:scale-110 active:scale-95 cursor-pointer z-30 ${
                     selectedMarker?.id === marker.id ? 'ring-4 ring-red-300 ring-offset-1 scale-110' : ''
                   }`}
-                  style={{ left: `${marker.posX}%`, top: `${marker.posY}%` }}
+                  style={{ left: `${posInfo.posX}%`, top: `${posInfo.posY}%` }}
                   title={`${marker.category}: ${marker.title}`}
                 >
                   <MapPin className="w-4 h-4 fill-current" />
@@ -918,10 +988,13 @@ function Editor360({
                   <div className="flex justify-between items-center border-b border-red-200 pb-2">
                     <span className="text-xs font-bold text-red-800 flex items-center gap-1.5">
                       <MapPin className="w-4 h-4 fill-red-600 text-white" />
-                      <span>{selectedMarker.category} (Frame {selectedMarker.frameIndex + 1})</span>
+                      <span>{selectedMarker.category} (Criado no Frame {selectedMarker.frameIndex + 1})</span>
                     </span>
                     <button 
-                      onClick={() => setSelectedMarker(null)}
+                      onClick={() => {
+                        setSelectedMarker(null);
+                        setIsRepositioning(false);
+                      }}
                       className="p-1 hover:bg-red-100 text-red-400 hover:text-red-700 rounded-full cursor-pointer"
                     >
                       <X className="w-4 h-4" />
@@ -932,6 +1005,76 @@ function Editor360({
                     <div>
                       <h4 className="font-extrabold text-sm text-slate-900">{selectedMarker.title}</h4>
                       <p className="text-xs text-slate-500 mt-1">{selectedMarker.description || 'Sem descrição detalhada cadastrada.'}</p>
+                    </div>
+
+                    {/* Multi-frame Position Adjuster */}
+                    <div className="bg-white p-3 rounded-xl border border-red-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700">Posição no Frame {currentFrame + 1}</span>
+                        {selectedMarker.framePositions && selectedMarker.framePositions[currentFrame] !== undefined ? (
+                          <span className="text-[10px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                            Exata
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                            Interpolada
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => setIsRepositioning(!isRepositioning)}
+                        className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                          isRepositioning
+                            ? 'bg-blue-600 text-white animate-pulse shadow-md'
+                            : 'bg-slate-900 hover:bg-slate-800 text-white'
+                        }`}
+                      >
+                        <Move className="w-3.5 h-3.5" />
+                        <span>{isRepositioning ? 'Clique no veículo para gravar este frame' : `Ajustar Posição no Frame ${currentFrame + 1}`}</span>
+                      </button>
+
+                      {isRepositioning && (
+                        <p className="text-[10px] text-blue-600 font-bold text-center leading-tight">
+                          Clique na imagem do veículo (à esquerda) para gravar a posição exata para o Frame {currentFrame + 1}.
+                        </p>
+                      )}
+
+                      {/* Registered Frame Keyframes List */}
+                      {selectedMarker.framePositions && Object.keys(selectedMarker.framePositions).length > 0 && (
+                        <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Frames Gravados:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {Object.entries(selectedMarker.framePositions)
+                              .map(([fStr, pos]) => ({ frameNum: Number(fStr), pos }))
+                              .sort((a, b) => a.frameNum - b.frameNum)
+                              .map(({ frameNum, pos }) => (
+                                <div 
+                                  key={frameNum} 
+                                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border ${
+                                    frameNum === currentFrame ? 'bg-red-50 text-red-700 border-red-300' : 'bg-slate-50 text-slate-600 border-slate-200'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setCurrentFrame(frameNum)}
+                                    className="hover:underline cursor-pointer"
+                                  >
+                                    F{frameNum + 1}: {Math.round(pos.posX)}%, {Math.round(pos.posY)}%
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveFramePosition(frameNum)}
+                                    className="text-slate-400 hover:text-red-600 ml-0.5 cursor-pointer"
+                                    title="Remover posição deste frame"
+                                  >
+                                    <X className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     {selectedMarker.damageImages && selectedMarker.damageImages.length > 0 && (
@@ -959,6 +1102,7 @@ function Editor360({
                           if (confirm('Deseja realmente excluir este marcador?')) {
                             await deleteMarker(selectedMarker.id);
                             setSelectedMarker(null);
+                            setIsRepositioning(false);
                           }
                         }}
                         className="text-xs font-bold text-red-600 hover:text-red-800 flex items-center gap-1 cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50"
@@ -966,7 +1110,6 @@ function Editor360({
                         <Trash2 className="w-3.5 h-3.5" />
                         Remover Marcador
                       </button>
-                      <span className="text-[10px] text-slate-400">Coordenadas: {Math.round(selectedMarker.posX)}%, {Math.round(selectedMarker.posY)}%</span>
                     </div>
                   </div>
                 </div>

@@ -13,6 +13,7 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { Car, LeadMessage, Vehicle360, DamageMarker } from '../types';
 import { vehicle360Service } from '../services/vehicle360.service';
+import { getMarkerPositionForFrame } from '../utils/markerUtils';
 
 const HOTSPOT_VISIBLE_RANGE = 2;
 
@@ -469,54 +470,50 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                   <span>Arraste para girar o carro</span>
                 </div>
 
-                {/* Active Damage Markers with linear range persistence (±2 frames) */}
-                {markers360
-                  .filter(marker => isMarkerVisibleOnFrame(Number(marker.frameIndex), currentFrame360))
-                  .map(marker => {
-                    const diff = Math.abs(currentFrame360 - Number(marker.frameIndex));
-                    const opacity = Math.max(0.3, 1 - (diff / (HOTSPOT_VISIBLE_RANGE + 1)) * 0.4);
-                    const scale = Math.max(0.75, 1 - (diff / (HOTSPOT_VISIBLE_RANGE + 1)) * 0.15);
+                {/* Active Damage Markers with smooth multi-frame interpolation */}
+                {markers360.map(marker => {
+                  const posInfo = getMarkerPositionForFrame(marker, currentFrame360);
+                  if (!posInfo.isVisible) return null;
 
-                    return (
-                      <div
-                        key={marker.id}
-                        style={{ 
-                          top: `${marker.posY}%`, 
-                          left: `${marker.posX}%`,
-                          opacity,
-                          transform: `translate(-50%, -50%) scale(${scale})`,
-                          transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+                  return (
+                    <div
+                      key={marker.id}
+                      style={{ 
+                        top: `${posInfo.posY}%`, 
+                        left: `${posInfo.posX}%`,
+                        transform: `translate(-50%, -50%)`,
+                        transition: 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
+                      }}
+                      className="absolute z-20 group"
+                    >
+                      {/* Marker Circle */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setModalMarker(marker);
                         }}
-                        className="absolute z-20 group"
+                        className="relative cursor-pointer transition-transform duration-200 hover:scale-125 focus:outline-none"
                       >
-                        {/* Marker Circle */}
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setModalMarker(marker);
-                          }}
-                          className="relative cursor-pointer transition-transform duration-200 hover:scale-125 focus:outline-none"
-                        >
-                          {/* Pulse Ring */}
-                          <span className="absolute -inset-2 rounded-full bg-red-500/40 animate-ping pointer-events-none" />
-                          {/* Inner Marker Circle */}
-                          <div className="relative w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-red-600 border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ring-red-500/50">
-                            <span className="w-2.5 h-2.5 rounded-full bg-white shadow-inner" />
-                          </div>
-                        </button>
-
-                        {/* Hover Tooltip */}
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 transition-all duration-200">
-                          <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-xl shadow-2xl whitespace-nowrap border border-slate-700/60 text-center space-y-0.5">
-                            <span className="font-extrabold block text-red-400">{marker.title}</span>
-                            <span className="text-[10px] text-slate-300 font-medium block">Clique para detalhar</span>
-                          </div>
-                          <div className="w-2.5 h-2.5 bg-slate-900/95 rotate-45 -mt-1.5 border-r border-b border-slate-700/60" />
+                        {/* Pulse Ring */}
+                        <span className="absolute -inset-2 rounded-full bg-red-500/40 animate-ping pointer-events-none" />
+                        {/* Inner Marker Circle */}
+                        <div className="relative w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-red-600 border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ring-red-500/50">
+                          <span className="w-2.5 h-2.5 rounded-full bg-white shadow-inner" />
                         </div>
+                      </button>
+
+                      {/* Hover Tooltip */}
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 transition-all duration-200">
+                        <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-xl shadow-2xl whitespace-nowrap border border-slate-700/60 text-center space-y-0.5">
+                          <span className="font-extrabold block text-red-400">{marker.title}</span>
+                          <span className="text-[10px] text-slate-300 font-medium block">Clique para detalhar</span>
+                        </div>
+                        <div className="w-2.5 h-2.5 bg-slate-900/95 rotate-45 -mt-1.5 border-r border-b border-slate-700/60" />
                       </div>
-                    );
-                  })}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Bottom Control Bar - Strictly ◀, ▶, Giro Automático (No frame counter) */}
