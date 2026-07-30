@@ -1,10 +1,19 @@
 import { DamageMarker } from '../types';
 
-export const HOTSPOT_VISIBLE_RANGE = 2;
+export const HOTSPOT_VISIBLE_RANGE = 3;
 
 export interface FramePos {
   posX: number;
   posY: number;
+  isConfirmed?: boolean;
+}
+
+export interface MarkerPositionResult {
+  posX: number;
+  posY: number;
+  isVisible: boolean;
+  status: 'confirmed' | 'interpolated' | 'none';
+  isKeyframe: boolean;
 }
 
 /**
@@ -13,13 +22,24 @@ export interface FramePos {
 export function getMarkerPositionForFrame(
   marker: DamageMarker,
   currentFrame: number
-): { posX: number; posY: number; isVisible: boolean } {
+): MarkerPositionResult {
   const primaryFrame = Number(marker.frameIndex);
-  const primaryPos: FramePos = { posX: Number(marker.posX), posY: Number(marker.posY) };
+  const primaryPos: FramePos = { posX: Number(marker.posX), posY: Number(marker.posY), isConfirmed: true };
 
   const positions: Record<number, FramePos> = { ...marker.framePositions };
   if (positions[primaryFrame] === undefined) {
     positions[primaryFrame] = primaryPos;
+  }
+
+  // Exact frame keyframe match
+  if (positions[currentFrame] !== undefined) {
+    return {
+      posX: positions[currentFrame].posX,
+      posY: positions[currentFrame].posY,
+      isVisible: true,
+      status: 'confirmed',
+      isKeyframe: true
+    };
   }
 
   const keys = Object.keys(positions)
@@ -31,16 +51,9 @@ export function getMarkerPositionForFrame(
     return {
       posX: primaryPos.posX,
       posY: primaryPos.posY,
-      isVisible: diff <= HOTSPOT_VISIBLE_RANGE
-    };
-  }
-
-  // 1. Exact frame match
-  if (positions[currentFrame] !== undefined) {
-    return {
-      posX: positions[currentFrame].posX,
-      posY: positions[currentFrame].posY,
-      isVisible: true
+      isVisible: diff <= HOTSPOT_VISIBLE_RANGE,
+      status: diff === 0 ? 'confirmed' : diff <= HOTSPOT_VISIBLE_RANGE ? 'interpolated' : 'none',
+      isKeyframe: diff === 0
     };
   }
 
@@ -56,47 +69,102 @@ export function getMarkerPositionForFrame(
     }
   }
 
-  // Case A: Between two registered frames -> Linear Interpolation
+  // Case A: Between two registered keyframes -> Linear Interpolation
   if (prevFrame !== null && nextFrame !== null) {
     const gap = nextFrame - prevFrame;
-    const distFromPrev = currentFrame - prevFrame;
-    const distFromNext = nextFrame - currentFrame;
+    const t = (currentFrame - prevFrame) / gap;
+    const posPrev = positions[prevFrame];
+    const posNext = positions[nextFrame];
+    const posX = Math.round((posPrev.posX + t * (posNext.posX - posPrev.posX)) * 10) / 10;
+    const posY = Math.round((posPrev.posY + t * (posNext.posY - posPrev.posY)) * 10) / 10;
 
-    // Visible if between registered frames OR within tolerance of registered frames
-    if (distFromPrev <= HOTSPOT_VISIBLE_RANGE || distFromNext <= HOTSPOT_VISIBLE_RANGE || gap <= HOTSPOT_VISIBLE_RANGE * 2) {
-      const t = (currentFrame - prevFrame) / (nextFrame - prevFrame);
-      const posPrev = positions[prevFrame];
-      const posNext = positions[nextFrame];
-      return {
-        posX: posPrev.posX + t * (posNext.posX - posPrev.posX),
-        posY: posPrev.posY + t * (posNext.posY - posPrev.posY),
-        isVisible: true
-      };
-    }
-    return { posX: positions[prevFrame].posX, posY: positions[prevFrame].posY, isVisible: false };
+    return {
+      posX,
+      posY,
+      isVisible: true,
+      status: 'interpolated',
+      isKeyframe: false
+    };
   }
 
-  // Case B: Before all registered frames
+  // Case B: Before first registered keyframe
   if (nextFrame !== null && prevFrame === null) {
     const diff = nextFrame - currentFrame;
+    const pos = positions[nextFrame];
     return {
-      posX: positions[nextFrame].posX,
-      posY: positions[nextFrame].posY,
-      isVisible: diff <= HOTSPOT_VISIBLE_RANGE
+      posX: pos.posX,
+      posY: pos.posY,
+      isVisible: diff <= HOTSPOT_VISIBLE_RANGE,
+      status: diff <= HOTSPOT_VISIBLE_RANGE ? 'interpolated' : 'none',
+      isKeyframe: false
     };
   }
 
-  // Case C: After all registered frames
+  // Case C: After last registered keyframe
   if (prevFrame !== null && nextFrame === null) {
     const diff = currentFrame - prevFrame;
+    const pos = positions[prevFrame];
     return {
-      posX: positions[prevFrame].posX,
-      posY: positions[prevFrame].posY,
-      isVisible: diff <= HOTSPOT_VISIBLE_RANGE
+      posX: pos.posX,
+      posY: pos.posY,
+      isVisible: diff <= HOTSPOT_VISIBLE_RANGE,
+      status: diff <= HOTSPOT_VISIBLE_RANGE ? 'interpolated' : 'none',
+      isKeyframe: false
     };
   }
 
-  return { posX: primaryPos.posX, posY: primaryPos.posY, isVisible: false };
+  return {
+    posX: primaryPos.posX,
+    posY: primaryPos.posY,
+    isVisible: false,
+    status: 'none',
+    isKeyframe: false
+  };
+}
+
+/**
+ * Returns timeline breakdown for all frames in the 360 rotation
+ */
+export function getMarkerTimelineStatus(
+  marker: DamageMarker,
+  totalFrames: number
+): Array<{ frameIndex: number; status: 'confirmed' | 'interpolated' | 'none'; posX: number; posY: number }> {
+  const result = [];
+  for (let f = 0; f < totalFrames; f++) {
+    const info = getMarkerPositionForFrame(marker, f);
+    result.push({
+      frameIndex: f,
+      status: info.status,
+      posX: info.posX,
+      posY: info.posY
+    });
+  }
+  return result;
+}
+
+/**
+ * Propagates current position from startFrame forward by `count` frames or until end
+ */
+export function propagateMarkerPositions(
+  marker: DamageMarker,
+  startFrame: number,
+  count: number | 'end',
+  totalFrames: number
+): Record<number, FramePos> {
+  const currentPos = getMarkerPositionForFrame(marker, startFrame);
+  const updatedPositions: Record<number, FramePos> = { ...marker.framePositions };
+
+  // Set current as confirmed keyframe
+  updatedPositions[startFrame] = { posX: currentPos.posX, posY: currentPos.posY, isConfirmed: true };
+
+  const targetEndFrame = count === 'end' ? totalFrames - 1 : Math.min(startFrame + count, totalFrames - 1);
+
+  for (let f = startFrame + 1; f <= targetEndFrame; f++) {
+    // Only set if not already set or overwrite with propagated position
+    updatedPositions[f] = { posX: currentPos.posX, posY: currentPos.posY, isConfirmed: true };
+  }
+
+  return updatedPositions;
 }
 
 /**
