@@ -125,7 +125,7 @@ export interface DamageMarker {
   frameIndex: number;
   posX: number; // percentage 0-100
   posY: number; // percentage 0-100
-  framePositions?: Record<number, { posX: number; posY: number }>;
+  framePositions?: Record<number, { posX: number; posY: number; isConfirmed?: boolean }>;
   createdAt: string;
 }
 
