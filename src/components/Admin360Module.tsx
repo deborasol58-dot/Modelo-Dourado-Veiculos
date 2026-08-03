@@ -1,17 +1,13 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
-  RotateCcw, Search, ArrowLeft, CheckCircle2, MapPin, Image as ImageIcon,
-  Settings, Layers, Plus, PanelRightClose, PanelRightOpen, Trash2
+  RotateCcw, Upload, Plus, Trash2, Settings, Image as ImageIcon,
+  ChevronLeft, ChevronRight, X, Play, Pause, Loader2, CheckCircle2, 
+  AlertCircle, MapPin, Eye, Search, Layers, Grid, List, ArrowLeft, Move
 } from 'lucide-react';
 import { Car as CarType, Vehicle360, DamageMarker, DamageCategory } from '../types';
 import { useVehicle360 } from '../hooks/useVehicle360';
 import { vehicle360Service } from '../services/vehicle360.service';
-import { Viewer360Stage } from './360/Viewer360Stage';
-import { Timeline360 } from './360/Timeline360';
-import { Toolbar360 } from './360/Toolbar360';
-import { HotspotList } from './360/HotspotList';
-import { HotspotInspector } from './360/HotspotInspector';
-import { FramesManager } from './360/FramesManager';
+import { getMarkerPositionForFrame } from '../utils/markerUtils';
 
 interface Admin360ModuleProps {
   cars: CarType[];
@@ -88,7 +84,7 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
         <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-6">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 pb-5 mb-6">
             <div>
-              <span className="text-xs font-bold text-red-600 uppercase tracking-wider">Editor Profissional de Hotspots 360°</span>
+              <span className="text-xs font-bold text-red-600 uppercase tracking-wider">Módulo Inspetor 360°</span>
               <h3 className="font-extrabold text-2xl text-slate-900 mt-1">
                 {selectedVehicle.brand} {selectedVehicle.model}
               </h3>
@@ -135,7 +131,7 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
               placeholder="Buscar veículo..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:border-red-600 transition-all font-medium"
+              className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:border-red-600 transition-all"
             />
           </div>
           <div className="flex items-center gap-3">
@@ -155,6 +151,7 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCars.map(car => {
             const status = statuses[car.id] || 'draft';
+            const frameCount = status !== 'draft' ? 'Disponível' : 'Nenhum';
 
             return (
               <div 
@@ -196,7 +193,7 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
 
                   <div className="pt-5 border-t border-slate-100 mt-5 flex items-center justify-between">
                     <div className="text-xs">
-                      <span className="text-slate-400 block font-medium">Visualizador 360°</span>
+                      <span className="text-slate-400 block font-medium">Visualização 360°</span>
                       <span className={`font-bold block ${status !== 'draft' ? 'text-emerald-600' : 'text-slate-500'}`}>
                         {status !== 'draft' ? 'Configurado' : 'Não iniciado'}
                       </span>
@@ -225,10 +222,8 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
   );
 }
 
-import { Wizard360 } from './360/Wizard360';
-
 /* ==========================================
-   EDITOR 360 MAIN WRAPPER
+   EDITOR 360 SUB-COMPONENT
    ========================================== */
 interface Editor360Props {
   vehicle: CarType;
@@ -251,174 +246,138 @@ function Editor360({
   deleteProject,
   loading
 }: Editor360Props) {
+  const [activeTab, setActiveTab] = useState<'imagens' | 'marcadores' | 'configuracoes'>('imagens');
   const [currentFrame, setCurrentFrame] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [selectedMarker, setSelectedMarker] = useState<DamageMarker | null>(null);
-
-  // Edit Mode & Placement state
-  const [isEditModeActive, setIsEditModeActive] = useState(false);
   const [addMarkerMode, setAddMarkerMode] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState<number>(1);
-  const [saveToast, setSaveToast] = useState<string | null>(null);
 
-  // Orientation Config Wizard State
-  const [isWizardOpen, setIsWizardOpen] = useState(false);
-  const [orientationConfig, setOrientationConfig] = useState<{ front?: number; right?: number; rear?: number; left?: number }>(() => {
-    try {
-      const saved = localStorage.getItem(`360_orientation_${vehicle.id}`);
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
+  // Images state
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
-  const handleSaveOrientation = (config: { front?: number; right?: number; rear?: number; left?: number }) => {
-    setOrientationConfig(config);
-    try {
-      localStorage.setItem(`360_orientation_${vehicle.id}`, JSON.stringify(config));
-    } catch (e) {
-      console.error('Error storing orientation in localStorage:', e);
-    }
-  };
+  // Selected marker state for details view/edit
+  const [selectedMarker, setSelectedMarker] = useState<DamageMarker | null>(null);
+  const [isRepositioning, setIsRepositioning] = useState(false);
 
-  // Layout Side Panel State (Collapsible)
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [activeSideTab, setActiveSideTab] = useState<'hotspots' | 'inspector' | 'frames' | 'config'>('hotspots');
+  // Hotspot Marker placement state
+  const [newMarkerPos, setNewMarkerPos] = useState<{ x: number; y: number } | null>(null);
+  const [markerTitle, setMarkerTitle] = useState('');
+  const [markerDescription, setMarkerDescription] = useState('');
+  const [markerCategory, setMarkerCategory] = useState<DamageCategory>('Arranhão');
+  const [damageImages, setDamageImages] = useState<string[]>([]);
+  const [damageUploading, setDamageUploading] = useState(false);
 
-  // Fullscreen Container Ref
-  const editorContainerRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  // Settings state
+  const [framesCount, setFramesCount] = useState<number>(36);
+  const [projectStatus, setProjectStatus] = useState<Vehicle360['status']>('processing');
 
-  // Show Toast Message
-  const showToast = (msg: string) => {
-    setSaveToast(msg);
-    setTimeout(() => {
-      setSaveToast(null);
-    }, 2200);
-  };
+  // Drag interaction refs for 360 viewer rotation
+  const viewerRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startFrame = useRef(0);
 
-  const frames = useMemo(() => project?.images || [], [project]);
-  const totalFramesConfig = project?.framesCount || 36;
-
-  // Auto-rotation effect (Pause when editing)
+  // Auto-play effect
   useEffect(() => {
     let interval: any;
-    if (isPlaying && frames.length > 0 && !isEditModeActive) {
+    if (isPlaying && project?.images && project.images.length > 0) {
       interval = setInterval(() => {
-        setCurrentFrame(prev => (prev + 1) % frames.length);
+        setCurrentFrame(prev => (prev + 1) % project.images.length);
       }, 120);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, frames, isEditModeActive]);
+  }, [isPlaying, project]);
 
-  // Keyboard navigation (Arrow keys ← / →)
+  // Handle syncing settings fields on load
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (frames.length === 0) return;
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        setCurrentFrame(prev => (prev - 1 + frames.length) % frames.length);
-      } else if (e.key === 'ArrowRight') {
-        e.preventDefault();
-        setCurrentFrame(prev => (prev + 1) % frames.length);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [frames]);
-
-  // Fullscreen Toggle
-  const handleToggleFullscreen = () => {
-    if (!editorContainerRef.current) return;
-
-    if (!document.fullscreenElement) {
-      editorContainerRef.current.requestFullscreen().then(() => {
-        setIsFullscreen(true);
-      }).catch(err => {
-        console.error('Fullscreen request error:', err);
-      });
-    } else {
-      document.exitFullscreen().then(() => {
-        setIsFullscreen(false);
-      });
+    if (project) {
+      setFramesCount(project.framesCount);
+      setProjectStatus(project.status);
     }
+  }, [project]);
+
+  const frames = useMemo(() => {
+    return project?.images || [];
+  }, [project]);
+
+  // Handle dragging rotation
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (addMarkerMode || frames.length === 0) return;
+    isDragging.current = true;
+    startX.current = e.clientX;
+    startFrame.current = currentFrame;
+    setIsPlaying(false);
   };
 
-  // Listen for fullscreen change events
-  useEffect(() => {
-    const handleFsChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-    document.addEventListener('fullscreenchange', handleFsChange);
-    return () => document.removeEventListener('fullscreenchange', handleFsChange);
-  }, []);
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging.current || frames.length === 0) return;
+    const deltaX = e.clientX - startX.current;
+    // Every 15px is a frame rotation
+    const framesDiff = Math.floor(deltaX / 15);
+    let targetFrame = (startFrame.current - framesDiff) % frames.length;
+    if (targetFrame < 0) {
+      targetFrame += frames.length;
+    }
+    setCurrentFrame(targetFrame);
+  };
 
-  // Save specific frame position keyframe
-  const handleSetFramePosition = async (x: number, y: number) => {
-    if (addMarkerMode || !selectedMarker) {
-      // Create new hotspot at clicked position
-      const newTitle = `Avaria #${markers.length + 1}`;
-      console.log('Hotspot criado:', { title: newTitle, frame: currentFrame, posX: x, posY: y });
+  const handleMouseUp = () => {
+    isDragging.current = false;
+  };
 
-      try {
-        const saved = await saveMarker({
-          title: newTitle,
-          description: '',
-          category: 'Arranhão',
-          damageImages: [],
-          frameIndex: currentFrame,
-          posX: x,
-          posY: y,
-          framePositions: {
-            [currentFrame]: { posX: x, posY: y, isConfirmed: true }
-          }
-        });
+  // Handle clicking canvas for marker placement or re-positioning
+  const handleCanvasClick = async (e: React.MouseEvent<HTMLDivElement>) => {
+    if (frames.length === 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10;
+    const y = Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10;
 
-        setSelectedMarker(saved);
-        setAddMarkerMode(false);
-        setIsEditModeActive(true);
-        setActiveSideTab('inspector');
-        showToast('✓ Hotspot criado');
-      } catch (err) {
-        console.error('Error creating new marker:', err);
-      }
+    if (addMarkerMode) {
+      setNewMarkerPos({ x, y });
+      setAddMarkerMode(false);
+      setSelectedMarker(null);
+      setIsRepositioning(false);
       return;
     }
 
-    // Updating existing marker position
+    if (isRepositioning && selectedMarker) {
+      await handleSetFramePosition(x, y);
+    }
+  };
+
+  const handleSetFramePosition = async (x: number, y: number) => {
+    if (!selectedMarker) return;
+
     const existingPositions = selectedMarker.framePositions || {
       [selectedMarker.frameIndex]: { posX: selectedMarker.posX, posY: selectedMarker.posY }
     };
 
     const updatedPositions = {
       ...existingPositions,
-      [currentFrame]: { posX: x, posY: y, isConfirmed: true }
+      [currentFrame]: { posX: x, posY: y }
     };
 
     try {
       const saved = await saveMarker({
         id: selectedMarker.id,
+        vehicleId: selectedMarker.vehicleId,
         title: selectedMarker.title,
         description: selectedMarker.description,
         category: selectedMarker.category,
         damageImages: selectedMarker.damageImages,
         frameIndex: selectedMarker.frameIndex,
-        posX: x,
-        posY: y,
+        posX: selectedMarker.posX,
+        posY: selectedMarker.posY,
         framePositions: updatedPositions
       });
-
       setSelectedMarker(saved);
-      showToast(`✓ Hotspot salvo com sucesso`);
+      setIsRepositioning(false);
     } catch (err) {
       console.error('Error saving frame position:', err);
     }
   };
 
-  // Remove keyframe
-  const handleRemoveKeyframe = async (frameIdxToRemove: number) => {
+  const handleRemoveFramePosition = async (frameIdxToRemove: number) => {
     if (!selectedMarker) return;
 
     const existingPositions = { ...(selectedMarker.framePositions || {}) };
@@ -427,6 +386,7 @@ function Editor360({
     try {
       const saved = await saveMarker({
         id: selectedMarker.id,
+        vehicleId: selectedMarker.vehicleId,
         title: selectedMarker.title,
         description: selectedMarker.description,
         category: selectedMarker.category,
@@ -437,327 +397,864 @@ function Editor360({
         framePositions: existingPositions
       });
       setSelectedMarker(saved);
-      showToast(`✓ Keyframe F${frameIdxToRemove + 1} removido`);
     } catch (err) {
-      console.error('Error removing keyframe:', err);
+      console.error('Error removing frame position:', err);
     }
   };
 
-  // Duplicate Marker
-  const handleDuplicateMarker = async (markerToDup: DamageMarker) => {
+  // File Upload drag/drop handlers
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    const files = Array.from(e.dataTransfer.files || []) as File[];
+    if (files.length > 0) {
+      await processUploads(files);
+    }
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length > 0) {
+      await processUploads(files);
+    }
+  };
+
+  const processUploads = async (files: File[]) => {
+    setIsUploading(true);
+    setUploadProgress(1);
+    const uploadedUrls: string[] = [];
+
+    // Filter only images
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      setIsUploading(false);
+      alert('Por favor, selecione apenas arquivos de imagem.');
+      return;
+    }
+
+    // Sort files by name to maintain order
+    imageFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
     try {
-      const newTitle = `${markerToDup.title} (Cópia)`;
-      const saved = await saveMarker({
-        title: newTitle,
-        description: markerToDup.description,
-        category: markerToDup.category,
-        damageImages: markerToDup.damageImages || [],
+      for (let i = 0; i < imageFiles.length; i++) {
+        const file = imageFiles[i];
+        const url = await vehicle360Service.upload360Frame(vehicle.id, file);
+        uploadedUrls.push(url);
+        setUploadProgress(Math.round(((i + 1) / imageFiles.length) * 100));
+      }
+
+      // Combine with existing images or create new project
+      const currentImages = [...frames, ...uploadedUrls];
+      
+      // Auto-update or create project
+      await saveProject(framesCount, currentImages, 'processing');
+      setCurrentFrame(0);
+    } catch (err) {
+      console.error('Error uploading 360 files:', err);
+      alert('Erro ao enviar as imagens. Usando fallbacks locais se offline.');
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(null);
+    }
+  };
+
+  // Handle damage images upload
+  const handleDamageImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []) as File[];
+    if (files.length === 0) return;
+
+    setDamageUploading(true);
+    try {
+      const urls: string[] = [];
+      for (const file of files) {
+        const url = await vehicle360Service.uploadDamageImage(vehicle.id, file);
+        urls.push(url);
+      }
+      setDamageImages(prev => [...prev, ...urls]);
+    } catch (err) {
+      console.error('Error uploading damage image:', err);
+    } finally {
+      setDamageUploading(false);
+    }
+  };
+
+  // Save new marker handler
+  const handleSaveNewMarker = async () => {
+    if (!markerTitle || !newMarkerPos) return;
+
+    try {
+      await saveMarker({
+        title: markerTitle,
+        description: markerDescription,
+        category: markerCategory,
+        damageImages: damageImages,
         frameIndex: currentFrame,
-        posX: markerToDup.posX,
-        posY: markerToDup.posY,
-        framePositions: markerToDup.framePositions
+        posX: newMarkerPos.x,
+        posY: newMarkerPos.y,
+        framePositions: {
+          [currentFrame]: { posX: newMarkerPos.x, posY: newMarkerPos.y }
+        }
       });
 
-      setSelectedMarker(saved);
-      setActiveSideTab('inspector');
-      showToast('✓ Hotspot duplicado com sucesso!');
+      // Reset
+      setNewMarkerPos(null);
+      setMarkerTitle('');
+      setMarkerDescription('');
+      setMarkerCategory('Arranhão');
+      setDamageImages([]);
     } catch (err) {
-      console.error('Error duplicating marker:', err);
+      console.error('Error creating marker:', err);
     }
   };
 
-  // Delete Marker
-  const handleDeleteMarker = async (markerId: string) => {
-    try {
-      await deleteMarker(markerId);
-      setSelectedMarker(null);
-      setActiveSideTab('hotspots');
-      showToast('✓ Hotspot excluído!');
-    } catch (err) {
-      console.error('Error deleting marker:', err);
+  // Delete project trigger
+  const handleDeleteFull360 = async () => {
+    if (confirm('Deseja realmente excluir todo o projeto 360° deste veículo? Isso removerá permanentemente todos os frames e marcadores do Supabase.')) {
+      await deleteProject();
+      setCurrentFrame(0);
+      setActiveTab('imagens');
     }
   };
 
-  // Exit edit mode smoothly resets zoom to 100%
-  const handleExitEditMode = () => {
-    setIsEditModeActive(false);
-    setAddMarkerMode(false);
-    setZoomLevel(1);
-    showToast('✓ Edição concluída!');
+  // Reorder frames helper
+  const moveFrame = (index: number, direction: 'left' | 'right') => {
+    if (!project) return;
+    const newImages = [...frames];
+    const targetIndex = direction === 'left' ? index - 1 : index + 1;
+
+    if (targetIndex < 0 || targetIndex >= newImages.length) return;
+
+    // Swap
+    const temp = newImages[index];
+    newImages[index] = newImages[targetIndex];
+    newImages[targetIndex] = temp;
+
+    saveProject(framesCount, newImages, projectStatus);
+    setCurrentFrame(targetIndex);
   };
+
+  const removeFrame = (index: number) => {
+    if (!project) return;
+    if (!confirm('Deseja remover este frame do projeto?')) return;
+
+    const newImages = frames.filter((_, i) => i !== index);
+    saveProject(framesCount, newImages, projectStatus);
+    if (currentFrame >= newImages.length && newImages.length > 0) {
+      setCurrentFrame(newImages.length - 1);
+    }
+  };
+
+  const activeMarkers = useMemo(() => {
+    if (!frames.length) return [];
+    return markers
+      .map(m => ({
+        marker: m,
+        posInfo: getMarkerPositionForFrame(m, currentFrame)
+      }))
+      .filter(item => item.posInfo.isVisible);
+  }, [markers, currentFrame, frames.length]);
 
   return (
-    <div 
-      ref={editorContainerRef}
-      className={`space-y-4 bg-slate-950 p-4 sm:p-6 rounded-3xl transition-all ${isFullscreen ? 'fixed inset-0 z-50 rounded-none overflow-y-auto' : ''}`}
-    >
-      {/* MAIN 75% / 25% GRID LAYOUT */}
-      <div className="grid grid-cols-12 gap-6 items-start">
-        
-        {/* VISUALIZER STAGE AREA (~75% Width when open, 100% when collapsed) */}
-        <div className={`space-y-4 transition-all duration-300 ${isSidebarOpen ? 'col-span-12 lg:col-span-9' : 'col-span-12'}`}>
-          
-          {/* Main 360 Viewport Stage */}
-          <Viewer360Stage
-            frames={frames}
-            currentFrame={currentFrame}
-            totalFrames={frames.length}
-            markers={markers}
-            selectedMarker={selectedMarker}
-            isEditModeActive={isEditModeActive}
-            addMarkerMode={addMarkerMode}
-            zoomLevel={zoomLevel}
-            isFullscreen={isFullscreen}
-            saveToast={saveToast}
-            orientationConfig={orientationConfig}
-            onSelectFrame={setCurrentFrame}
-            onSelectMarker={(m) => {
-              setSelectedMarker(m);
-              setActiveSideTab('inspector');
-            }}
-            onSetFramePosition={handleSetFramePosition}
-            onExitEditMode={handleExitEditMode}
-            onChangeZoom={setZoomLevel}
-          />
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      {/* LEFT SIDE: 360 INTERACTIVE VIEWPORT */}
+      <div className="lg:col-span-7 space-y-4">
+        <div 
+          ref={viewerRef}
+          className={`relative aspect-video rounded-3xl border border-slate-200 bg-slate-950 overflow-hidden select-none ${
+            addMarkerMode ? 'cursor-crosshair' : frames.length > 0 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+          }`}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          onClick={handleCanvasClick}
+        >
+          {frames.length > 0 && frames[currentFrame] ? (
+            <div className="w-full h-full relative">
+              <img 
+                src={frames[currentFrame]} 
+                alt={`Frame ${currentFrame + 1}`}
+                className="w-full h-full object-contain pointer-events-none"
+                referrerPolicy="no-referrer"
+              />
 
-          {/* Timeline Strip */}
-          <Timeline360
-            totalFrames={frames.length}
-            currentFrame={currentFrame}
-            selectedMarker={selectedMarker}
-            onSelectFrame={setCurrentFrame}
-            onRemoveKeyframe={handleRemoveKeyframe}
-          />
+              {/* Marker Circles overlays */}
+              {activeMarkers.map(({ marker, posInfo }) => (
+                <button
+                  key={marker.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedMarker(marker);
+                    setNewMarkerPos(null);
+                    setIsRepositioning(false);
+                    setActiveTab('marcadores');
+                  }}
+                  className={`absolute w-7 h-7 bg-red-600 hover:bg-red-700 text-white font-bold rounded-full border-2 border-white shadow-lg flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 transition-transform hover:scale-110 active:scale-95 cursor-pointer z-30 ${
+                    selectedMarker?.id === marker.id ? 'ring-4 ring-red-300 ring-offset-1 scale-110' : ''
+                  }`}
+                  style={{ left: `${posInfo.posX}%`, top: `${posInfo.posY}%` }}
+                  title={`${marker.category}: ${marker.title}`}
+                >
+                  <MapPin className="w-4 h-4 fill-current" />
+                </button>
+              ))}
 
-          {/* Bottom Toolbar */}
-          <Toolbar360
-            currentFrame={currentFrame}
-            totalFrames={frames.length}
-            isPlaying={isPlaying}
-            zoomLevel={zoomLevel}
-            isFullscreen={isFullscreen}
-            isSidebarOpen={isSidebarOpen}
-            isEditModeActive={isEditModeActive}
-            saveToast={saveToast}
-            onPrevFrame={() => setCurrentFrame(prev => (prev - 1 + frames.length) % frames.length)}
-            onNextFrame={() => setCurrentFrame(prev => (prev + 1) % frames.length)}
-            onTogglePlay={() => setIsPlaying(!isPlaying)}
-            onChangeZoom={setZoomLevel}
-            onToggleFullscreen={handleToggleFullscreen}
-            onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-            onNewHotspot={() => {
-              console.log('Modo de edição iniciado');
-              setAddMarkerMode(true);
-              setIsEditModeActive(true);
-              setSelectedMarker(null);
-              showToast('🎯 Clique na imagem para posicionar o hotspot');
-            }}
-          />
+              {/* Temporary Placement Marker overlay */}
+              {newMarkerPos && (
+                <div 
+                  className="absolute w-7 h-7 bg-blue-500 text-white font-bold rounded-full border-2 border-white shadow-lg flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 z-30 animate-pulse"
+                  style={{ left: `${newMarkerPos.x}%`, top: `${newMarkerPos.y}%` }}
+                >
+                  <Plus className="w-4 h-4" />
+                </div>
+              )}
+
+              {/* Bottom indicators */}
+              <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between pointer-events-none">
+                <div className="bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-bold text-slate-300 flex items-center gap-1.5 shadow">
+                  <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                  <span>Frame {currentFrame + 1} de {frames.length}</span>
+                </div>
+
+                <div className="bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-bold text-slate-300 shadow">
+                  Arrastar para girar
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center text-center p-8 text-slate-500 bg-slate-900">
+              <RotateCcw className="w-12 h-12 text-slate-700 mb-3 animate-spin" style={{ animationDuration: '6s' }} />
+              <p className="font-extrabold text-white text-lg">Sem frames cadastrados</p>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm">
+                Selecione ou arraste imagens do carro na aba "Imagens" do lado direito para inicializar o visualizador 360°.
+              </p>
+            </div>
+          )}
+
+          {loading && (
+            <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center z-40">
+              <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl flex items-center gap-3">
+                <Loader2 className="w-5 h-5 text-red-500 animate-spin" />
+                <span className="text-xs font-bold text-white">Processando alterações...</span>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* SIDE PANEL (~25% Width, Collapsible) */}
-        {isSidebarOpen && (
-          <div className="col-span-12 lg:col-span-3 bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-xl flex flex-col min-h-[580px] max-h-[720px] transition-all">
-            
-            {/* Header Tabs */}
-            <div className="grid grid-cols-4 border-b border-slate-100 bg-slate-50 text-[10px] font-extrabold uppercase text-slate-500">
+        {/* Viewport Control Buttons */}
+        {frames.length > 0 && (
+          <div className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-2xl p-3.5 shadow-sm">
+            <div className="flex gap-2">
               <button
-                type="button"
-                onClick={() => setActiveSideTab('hotspots')}
-                className={`py-3 text-center transition-colors cursor-pointer border-b-2 flex flex-col items-center gap-1 ${
-                  activeSideTab === 'hotspots' ? 'text-red-600 border-red-600 bg-white font-extrabold' : 'border-transparent hover:text-slate-800'
-                }`}
+                onClick={() => setCurrentFrame(prev => (prev - 1 + frames.length) % frames.length)}
+                className="p-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer"
+                title="Quadro anterior"
               >
-                <MapPin className="w-3.5 h-3.5" />
-                <span>Hotspots</span>
+                <ChevronLeft className="w-4 h-4" />
               </button>
-
               <button
-                type="button"
-                onClick={() => setActiveSideTab('inspector')}
-                disabled={!selectedMarker}
-                className={`py-3 text-center transition-colors cursor-pointer border-b-2 flex flex-col items-center gap-1 disabled:opacity-40 ${
-                  activeSideTab === 'inspector' ? 'text-red-600 border-red-600 bg-white font-extrabold' : 'border-transparent hover:text-slate-800'
-                }`}
+                onClick={() => setIsPlaying(!isPlaying)}
+                className="flex items-center gap-2 px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer"
               >
-                <Layers className="w-3.5 h-3.5" />
-                <span>Inspector</span>
+                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                <span>{isPlaying ? 'Pausar' : 'Girar Automático'}</span>
               </button>
-
               <button
-                type="button"
-                onClick={() => setActiveSideTab('frames')}
-                className={`py-3 text-center transition-colors cursor-pointer border-b-2 flex flex-col items-center gap-1 ${
-                  activeSideTab === 'frames' ? 'text-red-600 border-red-600 bg-white font-extrabold' : 'border-transparent hover:text-slate-800'
-                }`}
+                onClick={() => setCurrentFrame(prev => (prev + 1) % frames.length)}
+                className="p-2.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl transition-colors cursor-pointer"
+                title="Próximo quadro"
               >
-                <ImageIcon className="w-3.5 h-3.5" />
-                <span>Frames</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setActiveSideTab('config')}
-                className={`py-3 text-center transition-colors cursor-pointer border-b-2 flex flex-col items-center gap-1 ${
-                  activeSideTab === 'config' ? 'text-red-600 border-red-600 bg-white font-extrabold' : 'border-transparent hover:text-slate-800'
-                }`}
-              >
-                <Settings className="w-3.5 h-3.5" />
-                <span>Ajustes</span>
+                <ChevronRight className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Tab Body */}
-            <div className="p-4 flex-1 overflow-y-auto">
-              
-              {/* TAB 1: HOTSPOTS LIST */}
-              {activeSideTab === 'hotspots' && (
-                <HotspotList
-                  markers={markers}
-                  selectedMarker={selectedMarker}
-                  currentFrame={currentFrame}
-                  totalFrames={frames.length}
-                  onSelectMarker={(m) => {
-                    setSelectedMarker(m);
-                    setActiveSideTab('inspector');
-                  }}
-                  onNewHotspot={() => {
-                    setAddMarkerMode(true);
-                    setIsEditModeActive(true);
-                    setSelectedMarker(null);
-                    showToast('🎯 Clique na imagem para posicionar');
-                  }}
-                />
-              )}
-
-              {/* TAB 2: INSPECTOR */}
-              {activeSideTab === 'inspector' && selectedMarker && (
-                <HotspotInspector
-                  marker={selectedMarker}
-                  vehicleId={vehicle.id}
-                  currentFrame={currentFrame}
-                  totalFrames={frames.length}
-                  onClose={() => setActiveSideTab('hotspots')}
-                  onEditPosition={() => {
-                    setIsEditModeActive(true);
-                    showToast('🎯 Ajuste a posição do hotspot');
-                  }}
-                  onSaveMarker={async (updated) => {
-                    const saved = await saveMarker(updated);
-                    setSelectedMarker(saved);
-                  }}
-                  onDeleteMarker={handleDeleteMarker}
-                  onDuplicateMarker={handleDuplicateMarker}
-                  onShowToast={showToast}
-                />
-              )}
-
-              {/* TAB 3: FRAMES MANAGER */}
-              {activeSideTab === 'frames' && (
-                <FramesManager
-                  vehicleId={vehicle.id}
-                  frames={frames}
-                  totalFramesConfig={totalFramesConfig}
-                  currentFrame={currentFrame}
-                  onSelectFrame={setCurrentFrame}
-                  onSaveFrames={async (newFrames) => {
-                    await saveProject(totalFramesConfig, newFrames, project?.status || 'processing');
-                  }}
-                  onShowToast={showToast}
-                />
-              )}
-
-              {/* TAB 4: ADJUSTMENTS & SETTINGS */}
-              {activeSideTab === 'config' && (
-                <div className="space-y-5 text-xs">
-                  <h4 className="font-extrabold text-slate-900 text-sm">Configurações do Giro 360°</h4>
-                  
-                  <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Assistente de Configuração</label>
-                      <button
-                        type="button"
-                        onClick={() => setIsWizardOpen(true)}
-                        className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-extrabold cursor-pointer transition-all shadow flex items-center justify-center gap-2"
-                      >
-                        <Compass className="w-4 h-4 text-red-500" />
-                        <span>Abrir Assistente 360° (3 Etapas)</span>
-                      </button>
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Quantidade de Frames Esperados</label>
-                      <select
-                        value={totalFramesConfig}
-                        onChange={async (e) => {
-                          const val = Number(e.target.value);
-                          await saveProject(val, frames, project?.status || 'draft');
-                          showToast('✓ Configuração atualizada');
-                        }}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800"
-                      >
-                        <option value={24}>24 Frames</option>
-                        <option value={36}>36 Frames (Padrão)</option>
-                        <option value={48}>48 Frames (Alta precisão)</option>
-                        <option value={72}>72 Frames (Ultra HD)</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="font-bold text-slate-700 block mb-1">Status do Giro 360°</label>
-                      <select
-                        value={project?.status || 'draft'}
-                        onChange={async (e) => {
-                          const val = e.target.value as Vehicle360['status'];
-                          await saveProject(totalFramesConfig, frames, val);
-                          showToast('✓ Status do projeto salvo');
-                        }}
-                        className="w-full p-2 bg-white border border-slate-200 rounded-xl font-bold text-slate-800"
-                      >
-                        <option value="draft">Rascunho (Não publicado)</option>
-                        <option value="processing">Em Andamento</option>
-                        <option value="completed">Concluído & Publicado</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-slate-100">
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (confirm('Atenção: Deseja realmente excluir todo o projeto 360° e seus hotspots? Esta ação é irreversível.')) {
-                          await deleteProject();
-                          setSelectedMarker(null);
-                          showToast('✓ Projeto 360° excluído');
-                        }
-                      }}
-                      className="w-full py-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl font-bold border border-red-200 cursor-pointer flex items-center justify-center gap-2"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      <span>Excluir Projeto 360° Inteiro</span>
-                    </button>
-                  </div>
-                </div>
-              )}
+            <div className="text-xs font-bold text-slate-500">
+              {markers.length} marcadores totais
             </div>
           </div>
         )}
       </div>
 
-      {/* 360 Orientation & Setup Wizard Modal */}
-      <Wizard360
-        isOpen={isWizardOpen}
-        onClose={() => setIsWizardOpen(false)}
-        frames={frames}
-        totalFramesConfig={totalFramesConfig}
-        currentFrame={currentFrame}
-        onSelectFrame={setCurrentFrame}
-        orientationConfig={orientationConfig}
-        onSaveOrientation={handleSaveOrientation}
-        onFinish={() => {
-          showToast('✓ Projeto 360° configurado!');
-        }}
-      />
+      {/* RIGHT SIDE: MANAGEMENT TABS PANEL */}
+      <div className="lg:col-span-5 bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm flex flex-col min-h-[500px]">
+        {/* Tab Headers */}
+        <div className="grid grid-cols-3 border-b border-slate-100 bg-slate-50">
+          <button
+            onClick={() => {
+              setActiveTab('imagens');
+              setSelectedMarker(null);
+              setNewMarkerPos(null);
+            }}
+            className={`py-4 text-center text-xs font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1.5 border-b-2 ${
+              activeTab === 'imagens'
+                ? 'text-red-600 border-red-600 bg-white'
+                : 'text-slate-400 border-transparent hover:bg-slate-100/50 hover:text-slate-700'
+            }`}
+          >
+            <ImageIcon className="w-4 h-4" />
+            <span>Imagens ({frames.length})</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('marcadores');
+              setNewMarkerPos(null);
+            }}
+            className={`py-4 text-center text-xs font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1.5 border-b-2 ${
+              activeTab === 'marcadores'
+                ? 'text-red-600 border-red-600 bg-white'
+                : 'text-slate-400 border-transparent hover:bg-slate-100/50 hover:text-slate-700'
+            }`}
+          >
+            <MapPin className="w-4 h-4" />
+            <span>Marcadores</span>
+          </button>
+          <button
+            onClick={() => {
+              setActiveTab('configuracoes');
+              setSelectedMarker(null);
+              setNewMarkerPos(null);
+            }}
+            className={`py-4 text-center text-xs font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1.5 border-b-2 ${
+              activeTab === 'configuracoes'
+                ? 'text-red-600 border-red-600 bg-white'
+                : 'text-slate-400 border-transparent hover:bg-slate-100/50 hover:text-slate-700'
+            }`}
+          >
+            <Settings className="w-4 h-4" />
+            <span>Ajustes</span>
+          </button>
+        </div>
+
+        {/* Tab Viewport */}
+        <div className="p-6 flex-1 overflow-y-auto">
+          
+          {/* TAB: IMAGES */}
+          {activeTab === 'imagens' && (
+            <div className="space-y-6">
+              {/* Upload Zone */}
+              <div 
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+                className="border-2 border-dashed border-slate-200 hover:border-red-600 rounded-2xl p-6 text-center transition-colors bg-slate-50/50 relative cursor-pointer"
+              >
+                <input 
+                  type="file" 
+                  id="360-files-uploader"
+                  multiple 
+                  accept="image/*"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                <label htmlFor="360-files-uploader" className="cursor-pointer block space-y-2">
+                  <div className="w-10 h-10 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
+                    <Upload className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-slate-800">Selecione ou Arraste os Frames</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Carregue imagens ordenadas de preferência (ex: 001, 002...)</p>
+                  </div>
+                </label>
+
+                {isUploading && (
+                  <div className="absolute inset-0 bg-white/95 backdrop-blur-xs flex flex-col items-center justify-center p-4 rounded-2xl space-y-3">
+                    <Loader2 className="w-6 h-6 text-red-600 animate-spin" />
+                    <div className="w-full max-w-[200px]">
+                      <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1">
+                        <span>Enviando para o Storage</span>
+                        <span>{uploadProgress}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
+                        <div className="bg-red-600 h-full" style={{ width: `${uploadProgress}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Status information */}
+              <div className="flex items-center justify-between text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
+                <span>Total de Frames: {frames.length} / {framesCount}</span>
+                <span className="text-red-600">{frames.length > 0 ? `${frames.length} imagens` : 'Sem imagens'}</span>
+              </div>
+
+              {/* Reordering Preview Grid */}
+              {frames.length > 0 && (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">Listagem de Frames</span>
+                    <button 
+                      onClick={() => {
+                        if (confirm('Deseja limpar todos os frames deste projeto?')) {
+                          saveProject(framesCount, [], 'draft');
+                        }
+                      }}
+                      className="text-[10px] text-red-600 hover:text-red-700 font-bold flex items-center gap-1 cursor-pointer bg-red-50 px-2 py-1 rounded"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Limpar Tudo
+                    </button>
+                  </div>
+
+                  {/* Virtualized/Scrollable layout for frames */}
+                  <div className="grid grid-cols-4 gap-2 max-h-[250px] overflow-y-auto p-1.5 border border-slate-100 rounded-xl">
+                    {frames.map((img, idx) => {
+                      const isActive = idx === currentFrame;
+                      return (
+                        <div 
+                          key={idx}
+                          onClick={() => setCurrentFrame(idx)}
+                          className={`relative aspect-square rounded-lg border overflow-hidden cursor-pointer transition-all ${
+                            isActive ? 'ring-2 ring-red-600 border-transparent shadow' : 'border-slate-200 hover:border-slate-400'
+                          }`}
+                        >
+                          <img src={img} alt={`F-${idx}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                          <div className="absolute top-1 left-1 bg-slate-900/80 backdrop-blur-xs text-[9px] font-bold text-white px-1.5 rounded">
+                            {idx + 1}
+                          </div>
+
+                          {/* Reordering Controls */}
+                          <div className="absolute bottom-1 right-1 flex gap-0.5 opacity-0 hover:opacity-100 focus-within:opacity-100 transition-opacity bg-slate-900/90 rounded p-0.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); moveFrame(idx, 'left'); }}
+                              disabled={idx === 0}
+                              className="text-white hover:text-red-500 disabled:opacity-30"
+                              title="Mover para esquerda"
+                            >
+                              <ChevronLeft className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); moveFrame(idx, 'right'); }}
+                              disabled={idx === frames.length - 1}
+                              className="text-white hover:text-red-500 disabled:opacity-30"
+                              title="Mover para direita"
+                            >
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); removeFrame(idx); }}
+                              className="text-red-400 hover:text-red-600 ml-0.5"
+                              title="Remover frame"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: MARKERS */}
+          {activeTab === 'marcadores' && (
+            <div className="space-y-6">
+              
+              {/* Add Marker Trigger Button */}
+              {!newMarkerPos && !selectedMarker && (
+                <div className="space-y-3">
+                  <button
+                    disabled={frames.length === 0}
+                    onClick={() => {
+                      setAddMarkerMode(true);
+                      setSelectedMarker(null);
+                    }}
+                    className={`w-full py-3 px-4 rounded-xl font-bold text-xs uppercase flex items-center justify-center gap-2 transition-all border shadow-sm ${
+                      addMarkerMode 
+                        ? 'bg-blue-50 text-blue-600 border-blue-200 ring-2 ring-blue-100'
+                        : frames.length === 0
+                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed'
+                        : 'bg-red-600 text-white hover:bg-red-700 border-transparent shadow hover:shadow-md cursor-pointer'
+                    }`}
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>{addMarkerMode ? 'Clique no Veículo (Esquerda)' : 'Adicionar Marcador de Avaria'}</span>
+                  </button>
+                  {addMarkerMode && (
+                    <p className="text-[11px] text-blue-600 font-bold text-center animate-pulse">
+                      Selecione o frame de rotação desejado, depois dê um clique sobre o ponto exato da avaria no veículo à esquerda.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Form: Place New Marker */}
+              {newMarkerPos && (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4 animate-fadeIn">
+                  <div className="flex justify-between items-center border-b border-slate-200 pb-2">
+                    <span className="text-xs font-bold text-slate-700">Nova Avaria (Frame {currentFrame + 1})</span>
+                    <button 
+                      onClick={() => setNewMarkerPos(null)}
+                      className="p-1 hover:bg-slate-200 text-slate-400 hover:text-slate-700 rounded-full cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Título</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ex: Riscado na porta esquerda"
+                        value={markerTitle}
+                        onChange={(e) => setMarkerTitle(e.target.value)}
+                        className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-red-600 bg-white font-medium"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Categoria da Avaria</label>
+                      <select
+                        value={markerCategory}
+                        onChange={(e) => setMarkerCategory(e.target.value as DamageCategory)}
+                        className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-red-600 bg-white font-medium"
+                      >
+                        {['Arranhão', 'Amassado', 'Parachoque', 'Farol', 'Lanterna', 'Pneu', 'Roda', 'Retrovisor', 'Capô', 'Teto', 'Vidro', 'Outro'].map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Descrição Detalhada</label>
+                      <textarea
+                        rows={2}
+                        placeholder="Escreva detalhes como gravidade, se necessita reparo rápido etc..."
+                        value={markerDescription}
+                        onChange={(e) => setMarkerDescription(e.target.value)}
+                        className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-red-600 bg-white font-medium resize-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Imagens Comprobatórias (Storage)</label>
+                      <div className="flex flex-wrap gap-2 items-center">
+                        <input 
+                          type="file" 
+                          id="damage-images-uploader"
+                          multiple 
+                          accept="image/*"
+                          onChange={handleDamageImageUpload}
+                          className="hidden"
+                        />
+                        <label 
+                          htmlFor="damage-images-uploader" 
+                          className="w-12 h-12 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-center cursor-pointer text-slate-400 hover:text-slate-600 transition-colors"
+                        >
+                          {damageUploading ? <Loader2 className="w-4 h-4 animate-spin text-red-600" /> : <Plus className="w-4 h-4" />}
+                        </label>
+                        {damageImages.map((url, idx) => (
+                          <div key={idx} className="relative w-12 h-12 rounded-lg border border-slate-200 overflow-hidden">
+                            <img src={url} alt={`D-${idx}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            <button
+                              type="button"
+                              onClick={() => setDamageImages(prev => prev.filter((_, i) => i !== idx))}
+                              className="absolute top-0 right-0 bg-red-600 text-white rounded-bl p-0.5 hover:bg-red-700"
+                            >
+                              <X className="w-2.5 h-2.5" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2 pt-2 border-t border-slate-200">
+                      <button
+                        onClick={handleSaveNewMarker}
+                        disabled={!markerTitle}
+                        className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer"
+                      >
+                        Salvar Marcador
+                      </button>
+                      <button
+                        onClick={() => setNewMarkerPos(null)}
+                        className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold rounded-lg cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* View/Edit existing marker details */}
+              {selectedMarker && (
+                <div className="bg-red-50/50 border border-red-200 rounded-2xl p-4 space-y-4 animate-fadeIn">
+                  <div className="flex justify-between items-center border-b border-red-200 pb-2">
+                    <span className="text-xs font-bold text-red-800 flex items-center gap-1.5">
+                      <MapPin className="w-4 h-4 fill-red-600 text-white" />
+                      <span>{selectedMarker.category} (Criado no Frame {selectedMarker.frameIndex + 1})</span>
+                    </span>
+                    <button 
+                      onClick={() => {
+                        setSelectedMarker(null);
+                        setIsRepositioning(false);
+                      }}
+                      className="p-1 hover:bg-red-100 text-red-400 hover:text-red-700 rounded-full cursor-pointer"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <h4 className="font-extrabold text-sm text-slate-900">{selectedMarker.title}</h4>
+                      <p className="text-xs text-slate-500 mt-1">{selectedMarker.description || 'Sem descrição detalhada cadastrada.'}</p>
+                    </div>
+
+                    {/* Multi-frame Position Adjuster */}
+                    <div className="bg-white p-3 rounded-xl border border-red-100 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700">Posição no Frame {currentFrame + 1}</span>
+                        {selectedMarker.framePositions && selectedMarker.framePositions[currentFrame] !== undefined ? (
+                          <span className="text-[10px] font-extrabold text-emerald-600 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                            Exata
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md">
+                            Interpolada
+                          </span>
+                        )}
+                      </div>
+
+                      <button
+                        onClick={() => setIsRepositioning(!isRepositioning)}
+                        className={`w-full py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                          isRepositioning
+                            ? 'bg-blue-600 text-white animate-pulse shadow-md'
+                            : 'bg-slate-900 hover:bg-slate-800 text-white'
+                        }`}
+                      >
+                        <Move className="w-3.5 h-3.5" />
+                        <span>{isRepositioning ? 'Clique no veículo para gravar este frame' : `Ajustar Posição no Frame ${currentFrame + 1}`}</span>
+                      </button>
+
+                      {isRepositioning && (
+                        <p className="text-[10px] text-blue-600 font-bold text-center leading-tight">
+                          Clique na imagem do veículo (à esquerda) para gravar a posição exata para o Frame {currentFrame + 1}.
+                        </p>
+                      )}
+
+                      {/* Registered Frame Keyframes List */}
+                      {selectedMarker.framePositions && Object.keys(selectedMarker.framePositions).length > 0 && (
+                        <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                          <span className="text-[10px] uppercase font-bold text-slate-400 block">Frames Gravados:</span>
+                          <div className="flex flex-wrap gap-1.5">
+                            {Object.entries(selectedMarker.framePositions)
+                              .map(([fStr, pos]) => ({ frameNum: Number(fStr), pos }))
+                              .sort((a, b) => a.frameNum - b.frameNum)
+                              .map(({ frameNum, pos }) => (
+                                <div 
+                                  key={frameNum} 
+                                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-1 rounded-md border ${
+                                    frameNum === currentFrame ? 'bg-red-50 text-red-700 border-red-300' : 'bg-slate-50 text-slate-600 border-slate-200'
+                                  }`}
+                                >
+                                  <button
+                                    type="button"
+                                    onClick={() => setCurrentFrame(frameNum)}
+                                    className="hover:underline cursor-pointer"
+                                  >
+                                    F{frameNum + 1}: {Math.round(pos.posX)}%, {Math.round(pos.posY)}%
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveFramePosition(frameNum)}
+                                    className="text-slate-400 hover:text-red-600 ml-0.5 cursor-pointer"
+                                    title="Remover posição deste frame"
+                                  >
+                                    <X className="w-2.5 h-2.5" />
+                                  </button>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedMarker.damageImages && selectedMarker.damageImages.length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-[10px] uppercase font-bold text-slate-400">Evidências da Inspeção:</span>
+                        <div className="flex flex-wrap gap-2">
+                          {selectedMarker.damageImages.map((img, idx) => (
+                            <a 
+                              key={idx} 
+                              href={img} 
+                              target="_blank" 
+                              rel="noreferrer"
+                              className="w-12 h-12 rounded-lg border border-slate-200 overflow-hidden shadow-sm hover:opacity-90 cursor-pointer block"
+                            >
+                              <img src={img} alt={`Img-${idx}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                            </a>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between items-center pt-3 border-t border-red-100">
+                      <button
+                        onClick={async () => {
+                          if (confirm('Deseja realmente excluir este marcador?')) {
+                            await deleteMarker(selectedMarker.id);
+                            setSelectedMarker(null);
+                            setIsRepositioning(false);
+                          }
+                        }}
+                        className="text-xs font-bold text-red-600 hover:text-red-800 flex items-center gap-1 cursor-pointer bg-white px-3 py-1.5 rounded-lg border border-red-200 hover:bg-red-50"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Remover Marcador
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* List of existing markers */}
+              <div className="space-y-3">
+                <span className="text-[10px] uppercase font-bold text-slate-400">Marcadores Cadastrados ({markers.length})</span>
+                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                  {markers.map(m => {
+                    const isSelected = selectedMarker?.id === m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => {
+                          setSelectedMarker(m);
+                          setCurrentFrame(m.frameIndex);
+                          setNewMarkerPos(null);
+                        }}
+                        className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                          isSelected 
+                            ? 'bg-red-50 border-red-300 ring-1 ring-red-200' 
+                            : 'bg-white border-slate-150 hover:bg-slate-50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="w-2 h-2 bg-red-600 rounded-full shrink-0" />
+                          <div>
+                            <p className="font-bold text-xs text-slate-900">{m.title}</p>
+                            <p className="text-[10px] text-slate-400 font-medium">
+                              Categoria: <span className="font-bold text-slate-600">{m.category}</span> • Frame: {m.frameIndex + 1}
+                            </p>
+                          </div>
+                        </div>
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                      </div>
+                    );
+                  })}
+
+                  {markers.length === 0 && (
+                    <div className="text-center py-6 text-xs text-slate-400 italic bg-slate-50 rounded-xl border border-slate-100">
+                      Nenhum marcador criado para este veículo ainda.
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: CONFIGURATIONS */}
+          {activeTab === 'configuracoes' && (
+            <div className="space-y-6">
+              <div className="space-y-4">
+                <h4 className="text-xs uppercase font-extrabold text-slate-800 tracking-wider border-b border-slate-100 pb-2">
+                  Especificações do Projeto 360°
+                </h4>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Status de Publicação</label>
+                    <select
+                      value={projectStatus}
+                      onChange={(e) => {
+                        const status = e.target.value as Vehicle360['status'];
+                        setProjectStatus(status);
+                        if (project) {
+                          saveProject(framesCount, frames, status);
+                        }
+                      }}
+                      className="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-red-600 bg-white text-slate-700"
+                    >
+                      {[
+                        { value: 'draft', label: 'Não iniciado' },
+                        { value: 'processing', label: 'Em andamento' },
+                        { value: 'completed', label: 'Concluído' }
+                      ].map(opt => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Quantidade Estimada de Frames</label>
+                    <select
+                      value={framesCount}
+                      onChange={(e) => {
+                        const cnt = Number(e.target.value);
+                        setFramesCount(cnt);
+                        if (project) {
+                          saveProject(cnt, frames, projectStatus);
+                        }
+                      }}
+                      className="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-red-600 bg-white text-slate-700"
+                    >
+                      {[24, 36, 48, 72, 96].map(num => (
+                        <option key={num} value={num}>{num} frames (Giro completo)</option>
+                      ))}
+                    </select>
+                    <p className="text-[10px] text-slate-400 mt-1">Garante que a rotação no showroom seja otimizada e o frame-rate ideal.</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Informational Panel */}
+              <div className="bg-slate-50 rounded-2xl border border-slate-150 p-4 space-y-2.5">
+                <span className="text-[10px] uppercase font-extrabold text-slate-500 block">Metadados do Inspetor</span>
+                <div className="grid grid-cols-2 gap-3 text-[11px] font-bold text-slate-600">
+                  <div className="bg-white p-2 rounded-lg border border-slate-100">
+                    <span className="text-slate-400 block text-[9px] font-medium uppercase">Carregado:</span>
+                    <span>{frames.length} imagens</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-slate-100">
+                    <span className="text-slate-400 block text-[9px] font-medium uppercase">Tamanho Estimado:</span>
+                    <span>{(frames.length * 0.15).toFixed(2)} MB</span>
+                  </div>
+                  <div className="bg-white p-2 rounded-lg border border-slate-100 col-span-2">
+                    <span className="text-slate-400 block text-[9px] font-medium uppercase">Atualizado em:</span>
+                    <span>{project ? new Date(project.updatedAt).toLocaleString('pt-BR') : 'N/A'}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Destructive Deletion Panel */}
+              {project && (
+                <div className="pt-6 border-t border-slate-100">
+                  <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3">
+                    <div>
+                      <h4 className="font-extrabold text-xs text-red-900 uppercase">Zona de Exclusão</h4>
+                      <p className="text-[10px] text-red-600 mt-1 font-medium leading-relaxed">
+                        Ao excluir este projeto 360°, todos os dados do banco e as imagens enviadas ao Supabase Storage serão removidos permanentemente.
+                      </p>
+                    </div>
+                    <button
+                      onClick={handleDeleteFull360}
+                      className="w-full py-2 px-4 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs uppercase transition-colors cursor-pointer"
+                    >
+                      Excluir Projeto 360°
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

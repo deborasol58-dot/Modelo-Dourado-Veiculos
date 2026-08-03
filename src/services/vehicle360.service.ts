@@ -217,56 +217,34 @@ export const vehicle360Service = {
       return [];
     }
 
-    // Group individual keyframe rows by title into unified Hotspot entities for client UI
-    const markerMap = new Map<string, DamageMarker>();
-
-    for (const m of markers) {
+    return markers.map((m: any) => {
+      const { cleanDescription, framePositions } = parseMarkerPositions(m.description || '', m.frame_positions);
       const frameIndex = Number(m.frame_number ?? 0);
       const posX = Number(m.pos_x ?? 0);
       const posY = Number(m.pos_y ?? 0);
-      const title = m.title || 'Dano';
-      const category = m.category || 'Outro';
-      const description = m.description || '';
-      const images = (m.vehicle_damage_images || []).map((img: any) => img.image_url || '').filter(Boolean);
 
-      const groupKey = `${title.toLowerCase().trim()}_${category.toLowerCase().trim()}`;
-
-      if (!markerMap.has(groupKey)) {
-        markerMap.set(groupKey, {
-          id: m.id,
-          vehicleId,
-          title,
-          description,
-          category,
-          damageImages: [...images],
-          frameIndex,
-          posX,
-          posY,
-          framePositions: {
-            [frameIndex]: { posX, posY }
-          },
-          createdAt: m.created_at || new Date().toISOString()
-        });
-      } else {
-        const existing = markerMap.get(groupKey)!;
-        existing.framePositions = {
-          ...existing.framePositions,
-          [frameIndex]: { posX, posY }
-        };
-        images.forEach((img: string) => {
-          if (!existing.damageImages.includes(img)) {
-            existing.damageImages.push(img);
-          }
-        });
+      if (framePositions[frameIndex] === undefined) {
+        framePositions[frameIndex] = { posX, posY };
       }
-    }
 
-    return Array.from(markerMap.values());
+      return {
+        id: m.id,
+        vehicleId,
+        title: m.title || 'Dano',
+        description: cleanDescription,
+        category: m.category || 'Outro',
+        damageImages: (m.vehicle_damage_images || []).map((img: any) => img.image_url || ''),
+        frameIndex,
+        posX,
+        posY,
+        framePositions,
+        createdAt: m.created_at
+      };
+    });
   },
 
   /**
    * Save marker using vehicle_damage_markers and vehicle_damage_images
-   * Adheres strictly to allowed columns: project_id, frame_number, pos_x, pos_y, title, description, category
    */
   async saveMarker(marker: Omit<DamageMarker, 'id' | 'createdAt'> & { id?: string }): Promise<DamageMarker> {
     if (!isUuid(marker.vehicleId)) {
@@ -296,76 +274,39 @@ export const vehicle360Service = {
       projectId = newProj.id;
     }
 
-    // 2. Check if a keyframe row for this title and frameIndex already exists
-    const { data: existingRow } = await supabase
-      .from('vehicle_damage_markers')
-      .select('id')
-      .eq('project_id', projectId)
-      .eq('title', marker.title)
-      .eq('frame_number', marker.frameIndex)
-      .maybeSingle();
+    // 2. Upsert marker in vehicle_damage_markers safely
+    const encodedDescription = encodeMarkerDescription(marker.description, marker.framePositions);
 
-    const markerPayload = {
+    const markerPayload: any = {
       project_id: projectId,
       title: marker.title,
-      description: marker.description || '',
-      category: marker.category || 'Outro',
+      description: encodedDescription,
+      category: marker.category,
       frame_number: marker.frameIndex,
       pos_x: marker.posX,
-      pos_y: marker.posY
+      pos_y: marker.posY,
+      frame_positions: marker.framePositions ? JSON.stringify(marker.framePositions) : null
     };
 
-    let savedMarkerRow: any;
-    const targetRowId = existingRow?.id || marker.id;
+    let markerId = marker.id;
+    let savedMarker: any;
 
-    if (targetRowId && isUuid(targetRowId)) {
-      const { data: updated, error: updErr } = await supabase
-        .from('vehicle_damage_markers')
-        .update(markerPayload)
-        .eq('id', targetRowId)
-        .select()
-        .single();
-
-      if (updErr) {
-        console.error('Error updating vehicle_damage_markers row:', updErr);
-        throw updErr;
-      }
-      savedMarkerRow = updated;
-    } else {
-      const { data: inserted, error: insErr } = await supabase
-        .from('vehicle_damage_markers')
-        .insert(markerPayload)
-        .select()
-        .single();
-
-      if (insErr) {
-        console.error('Error inserting vehicle_damage_markers row:', insErr);
-        throw insErr;
-      }
-      savedMarkerRow = inserted;
+    try {
+      savedMarker = await safeInsertOrUpdate('vehicle_damage_markers', markerId, markerPayload);
+      markerId = savedMarker.id;
+    } catch (error) {
+      console.error('Error saving vehicle_damage_markers:', error);
+      throw error;
     }
 
-    // Update metadata (title, category, description) for all other keyframe rows sharing this title
-    await supabase
-      .from('vehicle_damage_markers')
-      .update({
-        title: marker.title,
-        description: marker.description || '',
-        category: marker.category || 'Outro'
-      })
-      .eq('project_id', projectId)
-      .eq('title', marker.title);
-
-    // 3. Save images in vehicle_damage_images using saved row id
-    const savedRowId = savedMarkerRow.id;
+    // 3. Save images in vehicle_damage_images using marker_id
     let savedImages: string[] = marker.damageImages || [];
-
-    if (savedRowId) {
-      await supabase.from('vehicle_damage_images').delete().eq('marker_id', savedRowId);
+    if (markerId) {
+      await supabase.from('vehicle_damage_images').delete().eq('marker_id', markerId);
 
       if (marker.damageImages && marker.damageImages.length > 0) {
         const imageRows = marker.damageImages.map(imgUrl => ({
-          marker_id: savedRowId,
+          marker_id: markerId,
           image_url: imgUrl
         }));
         const { error: imgErr } = await supabase.from('vehicle_damage_images').insert(imageRows);
@@ -375,32 +316,20 @@ export const vehicle360Service = {
       }
     }
 
-    console.log('Hotspot salvo com sucesso:', {
-      id: savedRowId,
-      frame_number: marker.frameIndex,
-      pos_x: marker.posX,
-      pos_y: marker.posY,
-      title: marker.title
-    });
-
-    // Reconstruct updated framePositions dictionary from marker.framePositions
-    const updatedFramePositions = {
-      ...(marker.framePositions || {}),
-      [marker.frameIndex]: { posX: marker.posX, posY: marker.posY }
-    };
+    const { cleanDescription, framePositions } = parseMarkerPositions(savedMarker.description || '', savedMarker.frame_positions);
 
     return {
-      id: savedRowId,
+      id: markerId!,
       vehicleId: marker.vehicleId,
-      title: marker.title,
-      description: marker.description || '',
-      category: marker.category || 'Outro',
+      title: savedMarker.title || 'Dano',
+      description: cleanDescription,
+      category: savedMarker.category || 'Outro',
       damageImages: savedImages,
-      frameIndex: marker.frameIndex,
-      posX: marker.posX,
-      posY: marker.posY,
-      framePositions: updatedFramePositions,
-      createdAt: savedMarkerRow.created_at || new Date().toISOString()
+      frameIndex: Number(savedMarker.frame_number ?? 0),
+      posX: Number(savedMarker.pos_x ?? 0),
+      posY: Number(savedMarker.pos_y ?? 0),
+      framePositions: marker.framePositions || framePositions,
+      createdAt: savedMarker.created_at || new Date().toISOString()
     };
   },
 
