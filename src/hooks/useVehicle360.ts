@@ -1,30 +1,34 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Vehicle360, DamageMarker } from '../types';
+import { Vehicle360, DamageMarker, InspectionItem } from '../types';
 import { vehicle360Service } from '../services/vehicle360.service';
 
 export function useVehicle360(vehicleId: string | null) {
   const [loading, setLoading] = useState(false);
   const [project, setProject] = useState<Vehicle360 | null>(null);
   const [markers, setMarkers] = useState<DamageMarker[]>([]);
+  const [inspectionItems, setInspectionItems] = useState<InspectionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const fetch360Data = useCallback(async () => {
     if (!vehicleId) {
       setProject(null);
       setMarkers([]);
+      setInspectionItems([]);
       return;
     }
 
     setLoading(true);
     setError(null);
     try {
-      const [projData, markersData] = await Promise.all([
+      const [projData, markersData, inspectionData] = await Promise.all([
         vehicle360Service.get360ByVehicleId(vehicleId),
-        vehicle360Service.getMarkersByVehicleId(vehicleId)
+        vehicle360Service.getMarkersByVehicleId(vehicleId),
+        vehicle360Service.getInspectionItemsByVehicleId(vehicleId)
       ]);
 
       setProject(projData);
       setMarkers(markersData);
+      setInspectionItems(inspectionData);
     } catch (err: any) {
       console.error('Error fetching vehicle 360 data:', err);
       setError(err.message || 'Erro ao carregar dados do 360°');
@@ -48,6 +52,14 @@ export function useVehicle360(vehicleId: string | null) {
         images,
         status
       });
+      
+      // Auto-create inspection items when a project is saved if they don't exist
+      if (images.length > 0) {
+        await vehicle360Service.createDefaultInspectionItems(vehicleId);
+        const newItems = await vehicle360Service.getInspectionItemsByVehicleId(vehicleId);
+        setInspectionItems(newItems);
+      }
+      
       setProject(saved);
       return saved;
     } catch (err: any) {
@@ -88,6 +100,24 @@ export function useVehicle360(vehicleId: string | null) {
     }
   };
 
+  const saveInspectionItem = async (itemData: Omit<InspectionItem, 'id' | 'vehicleId' | 'createdAt'> & { id?: string }) => {
+    if (!vehicleId) return null;
+    try {
+      const saved = await vehicle360Service.saveInspectionItem({
+        ...itemData,
+        vehicleId
+      });
+      setInspectionItems(prev => {
+        const filtered = prev.filter(i => i.id !== saved.id);
+        return [...filtered, saved];
+      });
+      return saved;
+    } catch (err: any) {
+      console.error('Error saving inspection item:', err);
+      throw err;
+    }
+  };
+
   const deleteProject = async () => {
     if (!vehicleId) return;
     setLoading(true);
@@ -107,11 +137,13 @@ export function useVehicle360(vehicleId: string | null) {
     loading,
     project,
     markers,
+    inspectionItems,
     error,
     refresh: fetch360Data,
     saveProject,
     saveMarker,
     deleteMarker,
+    saveInspectionItem,
     deleteProject
   };
 }

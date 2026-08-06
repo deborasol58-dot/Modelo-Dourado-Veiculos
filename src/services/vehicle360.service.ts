@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { Vehicle360, DamageMarker } from '../types';
+import { Vehicle360, DamageMarker, InspectionItem, InspectionStatus } from '../types';
 import { parseMarkerPositions, encodeMarkerDescription } from '../utils/markerUtils';
 
 // Helper to check if a string is a UUID
@@ -352,9 +352,135 @@ export const vehicle360Service = {
       throw error;
     }
   },
+  
+  /**
+   * Fetch all inspection items for a specific vehicle
+   */
+  async getInspectionItemsByVehicleId(vehicleId: string): Promise<InspectionItem[]> {
+    if (!isUuid(vehicleId)) return [];
+
+    const { data, error } = await supabase
+      .from('vehicle_inspection_items')
+      .select('*')
+      .eq('vehicle_id', vehicleId);
+
+    if (error) {
+      console.error('Error fetching vehicle_inspection_items:', error);
+      return [];
+    }
+
+    return (data || []).map((item: any) => ({
+      id: item.id,
+      vehicleId: item.vehicle_id,
+      groupName: item.group_name,
+      name: item.name,
+      description: item.description || '',
+      status: item.status as InspectionStatus,
+      images: item.images || [],
+      frameIndex: item.frame_index !== null ? Number(item.frame_index) : undefined,
+      posX: item.pos_x !== null ? Number(item.pos_x) : undefined,
+      posY: item.pos_y !== null ? Number(item.pos_y) : undefined
+    }));
+  },
+
+  /**
+   * Save or update an inspection item
+   */
+  async saveInspectionItem(item: Omit<InspectionItem, 'id' | 'createdAt'> & { id?: string }): Promise<InspectionItem> {
+    if (!isUuid(item.vehicleId)) throw new Error('Invalid vehicle ID');
+
+    const payload: any = {
+      vehicle_id: item.vehicleId,
+      group_name: item.groupName,
+      name: item.name,
+      description: item.description,
+      status: item.status,
+      images: item.images,
+      frame_index: item.frameIndex,
+      pos_x: item.posX,
+      pos_y: item.posY,
+      updated_at: new Date().toISOString()
+    };
+
+    let itemId = item.id;
+    let savedItem: any;
+
+    try {
+      savedItem = await safeInsertOrUpdate('vehicle_inspection_items', itemId, payload);
+    } catch (error) {
+      console.error('Error saving vehicle_inspection_items:', error);
+      throw error;
+    }
+
+    return {
+      id: savedItem.id,
+      vehicleId: savedItem.vehicle_id,
+      groupName: savedItem.group_name,
+      name: savedItem.name,
+      description: savedItem.description || '',
+      status: savedItem.status as InspectionStatus,
+      images: savedItem.images || [],
+      frameIndex: savedItem.frame_index !== null ? Number(savedItem.frame_index) : undefined,
+      posX: savedItem.pos_x !== null ? Number(savedItem.pos_x) : undefined,
+      posY: savedItem.pos_y !== null ? Number(savedItem.pos_y) : undefined
+    };
+  },
+
+  /**
+   * Create default inspection items for a new project
+   */
+  async createDefaultInspectionItems(vehicleId: string): Promise<void> {
+    const existing = await this.getInspectionItemsByVehicleId(vehicleId);
+    if (existing.length > 0) return; // Already initialized
+
+    const defaults = [
+      { group_name: 'Exterior', name: 'Frente' },
+      { group_name: 'Exterior', name: 'Traseira' },
+      { group_name: 'Exterior', name: 'Lateral Esquerda' },
+      { group_name: 'Exterior', name: 'Lateral Direita' },
+      { group_name: 'Exterior', name: 'Capô' },
+      { group_name: 'Exterior', name: 'Porta-malas' },
+      { group_name: 'Exterior', name: 'Para-choque dianteiro' },
+      { group_name: 'Exterior', name: 'Para-choque traseiro' },
+      { group_name: 'Exterior', name: 'Roda dianteira esquerda' },
+      { group_name: 'Exterior', name: 'Roda traseira esquerda' },
+      { group_name: 'Exterior', name: 'Roda dianteira direita' },
+      { group_name: 'Exterior', name: 'Roda traseira direita' },
+      { group_name: 'Exterior', name: 'Porta dianteira esquerda' },
+      { group_name: 'Exterior', name: 'Porta traseira esquerda' },
+      { group_name: 'Exterior', name: 'Porta dianteira direita' },
+      { group_name: 'Exterior', name: 'Porta traseira direita' },
+      { group_name: 'Exterior', name: 'Para-brisa' },
+      { group_name: 'Exterior', name: 'Vidro traseiro' },
+      { group_name: 'Exterior', name: 'Farol esquerdo' },
+      { group_name: 'Exterior', name: 'Farol direito' },
+      { group_name: 'Exterior', name: 'Lanterna esquerda' },
+      { group_name: 'Exterior', name: 'Lanterna direita' },
+      { group_name: 'Exterior', name: 'Retrovisor esquerdo' },
+      { group_name: 'Exterior', name: 'Retrovisor direito' },
+      { group_name: 'Interior', name: 'Painel' },
+      { group_name: 'Interior', name: 'Volante' },
+      { group_name: 'Interior', name: 'Central Multimídia' },
+      { group_name: 'Interior', name: 'Banco motorista' },
+      { group_name: 'Interior', name: 'Banco passageiro' },
+      { group_name: 'Interior', name: 'Banco traseiro' },
+      { group_name: 'Interior', name: 'Porta-malas interno' },
+      { group_name: 'Interior', name: 'Motor' }
+    ];
+
+    const records = defaults.map(d => ({
+      vehicle_id: vehicleId,
+      group_name: d.group_name,
+      name: d.name,
+      status: 'Não Inspecionado'
+    }));
+
+    await supabase.from('vehicle_inspection_items').insert(records);
+  },
 
   /**
    * Delete 360-degree project (DB entries)
+
    */
   async delete360Project(vehicleId: string): Promise<void> {
     if (!isUuid(vehicleId)) {

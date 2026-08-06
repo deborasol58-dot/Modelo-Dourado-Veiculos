@@ -115,6 +115,36 @@ export type DamageCategory =
   | 'Vidro'
   | 'Outro';
 
+export type TechnicalInspectionStatus = 'Não avaliado' | 'OK' | 'Atenção' | 'Problema';
+export type InspectionCategory = 'Exterior' | 'Interior';
+
+export interface VehicleInspectionItem {
+  id: string;
+  projectId: string;
+  category: InspectionCategory | string;
+  itemName: string;
+  status: TechnicalInspectionStatus;
+  notes: string;
+  photos: string[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type InspectionStatus = 'OK' | 'Atenção' | 'Avaria' | 'Não Inspecionado';
+
+export interface InspectionItem {
+  id: string;
+  vehicleId: string;
+  groupName: string;
+  name: string;
+  description: string;
+  status: InspectionStatus;
+  images: string[];
+  frameIndex?: number;
+  posX?: number;
+  posY?: number;
+}
+
 export interface DamageMarker {
   id: string;
   vehicleId: string;

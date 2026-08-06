@@ -285,3 +285,22 @@ create policy "Allow public manage admins" on admins for all using (true);
 --  - videos/
 --  - logos/
 -- Set the bucket policy to "Allow public read access" and "Allow public upload access".
+
+-- 14. Create VEHICLE_INSPECTION_ITEMS Table
+create table if not exists vehicle_inspection_items (
+  id uuid default gen_random_uuid() primary key,
+  project_id uuid references vehicles(id) on delete cascade not null,
+  category text not null, -- 'Exterior' or 'Interior'
+  item_name text not null,
+  status text default 'Não avaliado', -- 'Não avaliado', 'OK', 'Atenção', 'Problema'
+  notes text default '',
+  photos jsonb default '[]'::jsonb,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+alter table vehicle_inspection_items enable row level security;
+create policy "Allow public read access to vehicle_inspection_items" on vehicle_inspection_items for select using (true);
+create policy "Allow public insert vehicle_inspection_items" on vehicle_inspection_items for insert with check (true);
+create policy "Allow public update vehicle_inspection_items" on vehicle_inspection_items for update using (true);
+create policy "Allow public delete vehicle_inspection_items" on vehicle_inspection_items for delete using (true);

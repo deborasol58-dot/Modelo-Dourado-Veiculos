@@ -8,12 +8,15 @@ import {
   ArrowLeft, Calendar, Gauge, Settings, Fuel, 
   Check, Send, CheckCircle2, MapPin, Sparkles, MessageCircle,
   Play, Pause, ChevronLeft, ChevronRight, RotateCcw, Info,
-  X, Maximize2, ZoomIn, ZoomOut
+  X, Maximize2, ZoomIn, ZoomOut, AlertTriangle, XCircle,
+  ShieldCheck, FileText, ChevronDown, ChevronUp, Camera, AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Car, LeadMessage, Vehicle360, DamageMarker } from '../types';
+import { Car, LeadMessage, Vehicle360, DamageMarker, VehicleInspectionItem } from '../types';
 import { vehicle360Service } from '../services/vehicle360.service';
+import { inspectionService } from '../services/inspectionService';
 import { getMarkerPositionForFrame } from '../utils/markerUtils';
+import ClientInspectionPanel from './ClientInspectionPanel';
 
 const HOTSPOT_VISIBLE_RANGE = 2;
 
@@ -39,12 +42,23 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
   // Live 360 project and markers from Supabase
   const [project360, setProject360] = useState<Vehicle360 | null>(null);
   const [markers360, setMarkers360] = useState<DamageMarker[]>([]);
+  const [inspectionItems360, setInspectionItems360] = useState<any[]>([]);
+  const [technicalInspections, setTechnicalInspections] = useState<VehicleInspectionItem[]>([]);
   const [loading360, setLoading360] = useState(true);
+  const [loadingInspection, setLoadingInspection] = useState(true);
   const [currentFrame360, setCurrentFrame360] = useState(0);
   const [isPlaying360, setIsPlaying360] = useState(false);
 
-  // Modal and Lightbox states for damage markers
-  const [modalMarker, setModalMarker] = useState<DamageMarker | null>(null);
+  // Inline Inspection Panel States (NO MODAL)
+  const [selectedInlineInspection, setSelectedInlineInspection] = useState<VehicleInspectionItem | null>(null);
+  const [selectedInlineMarker, setSelectedInlineMarker] = useState<DamageMarker | null>(null);
+  const [inlineTab, setInlineTab] = useState<'inspecao' | 'hotspots'>('inspecao');
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
+    Exterior: true,
+    Interior: true
+  });
+
+  // Lightbox for full-resolution photo inspection
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxZoom, setLightboxZoom] = useState<number>(1);
   const [lightboxPan, setLightboxPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -90,8 +104,10 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
           setGalleryLightboxIndex(null);
           setGalleryZoom(1);
           setGalleryPan({ x: 0, y: 0 });
-        } else if (modalMarker) {
-          setModalMarker(null);
+        } else if (selectedInlineMarker) {
+          setSelectedInlineMarker(null);
+        } else if (selectedInlineInspection) {
+          setSelectedInlineInspection(null);
         }
       } else if (galleryLightboxIndex !== null && car.images && car.images.length > 0) {
         if (e.key === 'ArrowLeft') {
@@ -107,28 +123,34 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lightboxImage, galleryLightboxIndex, modalMarker, car.images]);
+  }, [lightboxImage, galleryLightboxIndex, selectedInlineMarker, selectedInlineInspection, car.images]);
 
   // Drag-to-rotate states
   const [isDragging360, setIsDragging360] = useState(false);
   const startX360Ref = useRef(0);
   const currentFrameOnStart360Ref = useRef(0);
 
-  // Load 360 assets
+  // Load 360 assets and inspection data
   useEffect(() => {
     const fetch360Data = async () => {
       setLoading360(true);
+      setLoadingInspection(true);
       try {
-        const [proj, marks] = await Promise.all([
+        const [proj, marks, inspections, technicalList] = await Promise.all([
           vehicle360Service.get360ByVehicleId(car.id),
-          vehicle360Service.getMarkersByVehicleId(car.id)
+          vehicle360Service.getMarkersByVehicleId(car.id),
+          vehicle360Service.getInspectionItemsByVehicleId(car.id),
+          inspectionService.getInspection(car.id)
         ]);
         setProject360(proj);
         setMarkers360(marks);
+        setInspectionItems360(inspections);
+        setTechnicalInspections(technicalList);
       } catch (err) {
         console.error('Error loading public 360 data:', err);
       } finally {
         setLoading360(false);
+        setLoadingInspection(false);
       }
     };
     fetch360Data();
@@ -470,6 +492,65 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                   <span>Arraste para girar o carro</span>
                 </div>
 
+                {/* Active Inspection Items Overlay */}
+                {inspectionItems360.filter(item => item.frameIndex === currentFrame360 && item.posX != null && item.posY != null).map(item => {
+                  const isAvaria = item.status === 'Avaria';
+                  const isTech = item.status === 'OK' || item.status === 'Atenção';
+                  if (!isAvaria && !isTech) return null; // Don't show if it's 'Não Inspecionado' or unexpected status
+
+                  return (
+                    <div
+                      key={item.id}
+                      style={{ 
+                        top: `${item.posY}%`, 
+                        left: `${item.posX}%`,
+                        transform: `translate(-50%, -50%)`,
+                        transition: 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
+                      }}
+                      className="absolute z-20 group"
+                    >
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const match = technicalInspections.find(t => t.itemName.toLowerCase() === item.name.toLowerCase() || t.id === item.id);
+                          if (match) {
+                            setSelectedInlineInspection(match);
+                          } else {
+                            setSelectedInlineInspection({
+                              id: item.id,
+                              projectId: car.id,
+                              category: item.groupName || 'Exterior',
+                              itemName: item.name,
+                              status: item.status === 'Avaria' ? 'Problema' : item.status === 'Atenção' ? 'Atenção' : 'OK',
+                              notes: item.description || '',
+                              photos: item.images || []
+                            });
+                          }
+                          setSelectedInlineMarker(null);
+                          setInlineTab('inspecao');
+                          const elem = document.getElementById('inspection-panel-section');
+                          if (elem) elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                        }}
+                        className="relative cursor-pointer transition-transform duration-200 hover:scale-125 focus:outline-none"
+                      >
+                        <span className={`absolute -inset-2 rounded-full animate-ping pointer-events-none ${isAvaria ? 'bg-red-500/40' : 'bg-amber-400/40'}`} />
+                        <div className={`relative w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ${isAvaria ? 'bg-red-600 ring-red-500/50' : 'bg-amber-500 ring-amber-400/50'}`}>
+                          <span className="w-2.5 h-2.5 rounded-full bg-white shadow-inner" />
+                        </div>
+                      </button>
+
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 transition-all duration-200">
+                        <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-xl shadow-2xl whitespace-nowrap border border-slate-700/60 text-center space-y-0.5">
+                          <span className={`font-extrabold block ${isAvaria ? 'text-red-400' : 'text-amber-400'}`}>{item.name}</span>
+                          <span className="text-[10px] text-slate-300 font-medium block">Ver detalhes na inspeção abaixo</span>
+                        </div>
+                        <div className="w-2.5 h-2.5 bg-slate-900/95 rotate-45 -mt-1.5 border-r border-b border-slate-700/60" />
+                      </div>
+                    </div>
+                  );
+                })}
+
                 {/* Active Damage Markers with smooth multi-frame interpolation */}
                 {markers360.map(marker => {
                   const posInfo = getMarkerPositionForFrame(marker, currentFrame360);
@@ -491,7 +572,11 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setModalMarker(marker);
+                          setSelectedInlineMarker(marker);
+                          setSelectedInlineInspection(null);
+                          setInlineTab('hotspots');
+                          const elem = document.getElementById('inspection-panel-section');
+                          if (elem) elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                         }}
                         className="relative cursor-pointer transition-transform duration-200 hover:scale-125 focus:outline-none"
                       >
@@ -507,7 +592,7 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 transition-all duration-200">
                         <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-xl shadow-2xl whitespace-nowrap border border-slate-700/60 text-center space-y-0.5">
                           <span className="font-extrabold block text-red-400">{marker.title}</span>
-                          <span className="text-[10px] text-slate-300 font-medium block">Clique para detalhar</span>
+                          <span className="text-[10px] text-slate-300 font-medium block">Ver detalhes na inspeção abaixo</span>
                         </div>
                         <div className="w-2.5 h-2.5 bg-slate-900/95 rotate-45 -mt-1.5 border-r border-b border-slate-700/60" />
                       </div>
@@ -617,6 +702,24 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
               })}
             </div>
           )}
+
+          {/* INLINE TECHNICAL INSPECTION AND HOTSPOTS PANEL */}
+          <ClientInspectionPanel
+            items={technicalInspections}
+            markers={markers360}
+            selectedItem={selectedInlineInspection}
+            selectedMarker={selectedInlineMarker}
+            onSelectItem={(item) => setSelectedInlineInspection(item)}
+            onSelectMarker={(marker) => setSelectedInlineMarker(marker)}
+            onSelectFrame={(frameIdx) => setCurrentFrame360(frameIdx)}
+            onOpenLightbox={(url) => {
+              setLightboxImage(url);
+              setLightboxZoom(1);
+              setLightboxPan({ x: 0, y: 0 });
+            }}
+            inlineTab={inlineTab}
+            onTabChange={(tab) => setInlineTab(tab)}
+          />
         </section>
 
         {/* Content sections: About, Features & Technical Tables */}
@@ -767,93 +870,6 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
           </div>
         </div>
       </div>
-
-      {/* MODERN DAMAGE MARKER DETAIL MODAL */}
-      <AnimatePresence>
-        {modalMarker && (
-          <div 
-            className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6"
-            onClick={() => setModalMarker(null)}
-          >
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 15 }}
-              transition={{ duration: 0.3, ease: 'easeOut' }}
-              className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl space-y-4 relative text-white"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-red-400 bg-red-950/80 border border-red-800/60 px-2.5 py-0.5 rounded-full inline-block">
-                    {modalMarker.category || 'Detalhe'}
-                  </span>
-                  <h3 className="font-black text-xl text-white">
-                    {modalMarker.title}
-                  </h3>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setModalMarker(null)}
-                  className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Image Preview (Occupying almost all modal area) */}
-              {modalMarker.damageImages && modalMarker.damageImages.length > 0 ? (
-                <div className="relative group bg-slate-950 rounded-2xl overflow-hidden border border-slate-800/80 aspect-video sm:aspect-[16/10] flex items-center justify-center">
-                  <img 
-                    src={modalMarker.damageImages[0]} 
-                    alt={modalMarker.title}
-                    className="w-full h-full object-contain cursor-pointer transition-transform duration-300 group-hover:scale-102"
-                    referrerPolicy="no-referrer"
-                    onClick={() => {
-                      setLightboxImage(modalMarker.damageImages[0]);
-                      setLightboxZoom(1);
-                      setLightboxPan({ x: 0, y: 0 });
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLightboxImage(modalMarker.damageImages[0]);
-                      setLightboxZoom(1);
-                      setLightboxPan({ x: 0, y: 0 });
-                    }}
-                    className="absolute bottom-3 right-3 bg-slate-900/90 hover:bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-xl border border-slate-700 flex items-center gap-1.5 transition-colors shadow-lg cursor-pointer"
-                  >
-                    <Maximize2 className="w-3.5 h-3.5" />
-                    <span>Tela Cheia</span>
-                  </button>
-                </div>
-              ) : null}
-
-              {/* Description */}
-              {modalMarker.description && (
-                <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800/80">
-                  <p className="text-sm text-slate-300 leading-relaxed">
-                    {modalMarker.description}
-                  </p>
-                </div>
-              )}
-
-              {/* Bottom Actions */}
-              <div className="pt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => setModalMarker(null)}
-                  className="px-6 py-2.5 bg-slate-800 hover:bg-red-600 text-white font-bold text-sm rounded-xl transition-colors cursor-pointer"
-                >
-                  Fechar
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* FULLSCREEN LIGHTBOX WITH ZOOM & PAN */}
       <AnimatePresence>
