@@ -1,6 +1,23 @@
 import { supabase } from '../lib/supabase';
-import { Vehicle360, DamageMarker, InspectionItem, InspectionStatus } from '../types';
+import { Vehicle360, DamageMarker, InspectionItem, InspectionStatus, VehicleHotspot } from '../types';
 import { parseMarkerPositions, encodeMarkerDescription } from '../utils/markerUtils';
+
+const LOCAL_STORAGE_POI_PREFIX = 'autoshopping_pois_';
+
+function getLocalHotspots(vehicleId: string): VehicleHotspot[] {
+  try {
+    const raw = localStorage.getItem(`${LOCAL_STORAGE_POI_PREFIX}${vehicleId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function setLocalHotspots(vehicleId: string, list: VehicleHotspot[]) {
+  try {
+    localStorage.setItem(`${LOCAL_STORAGE_POI_PREFIX}${vehicleId}`, JSON.stringify(list));
+  } catch {}
+}
 
 // Helper to check if a string is a UUID
 const isUuid = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
@@ -586,5 +603,212 @@ export const vehicle360Service = {
       .getPublicUrl(data.path);
 
     return publicUrl;
+  },
+
+  /**
+   * Fetch all technical photos / gallery images for a vehicle from vehicle_images
+   */
+  async getVehicleImages(vehicleId: string, fallbackImages?: string[]): Promise<{ id: string; url: string; title?: string }[]> {
+    const results: { id: string; url: string; title?: string }[] = [];
+    const seenUrls = new Set<string>();
+
+    if (isUuid(vehicleId)) {
+      try {
+        const { data, error } = await supabase
+          .from('vehicle_images')
+          .select('*')
+          .eq('vehicle_id', vehicleId)
+          .order('display_order', { ascending: true });
+
+        if (!error && data && data.length > 0) {
+          for (const row of data) {
+            const url = row.image_url || '';
+            if (url && !seenUrls.has(url)) {
+              seenUrls.add(url);
+              results.push({
+                id: row.id,
+                url,
+                title: row.title || row.label || undefined
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Could not query vehicle_images from Supabase:', err);
+      }
+    }
+
+    // Add any fallback images passed from car / vehicle state
+    if (fallbackImages && fallbackImages.length > 0) {
+      for (let i = 0; i < fallbackImages.length; i++) {
+        const url = fallbackImages[i];
+        if (url && !seenUrls.has(url)) {
+          seenUrls.add(url);
+          results.push({
+            id: `img_${i}_${Date.now()}`,
+            url
+          });
+        }
+      }
+    }
+
+    return results;
+  },
+
+  /**
+   * Fetch all POI Hotspots (Pontos de Interesse) for a specific vehicle
+   */
+  async getHotspotsByVehicleId(vehicleId: string): Promise<VehicleHotspot[]> {
+    const localHotspots = getLocalHotspots(vehicleId);
+
+    if (!isUuid(vehicleId)) {
+      return localHotspots;
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('vehicle_hotspots')
+        .select('*')
+        .eq('vehicle_id', vehicleId);
+
+      if (error) {
+        console.warn('vehicle_hotspots table query error, fallback to local cache:', error.message);
+        return localHotspots;
+      }
+
+      if (!data || data.length === 0) {
+        return localHotspots;
+      }
+
+      // Fetch images for resolving imageId if needed
+      const vehicleImages = await this.getVehicleImages(vehicleId);
+      const imgMap = new Map<string, string>();
+      for (const img of vehicleImages) {
+        imgMap.set(img.id, img.url);
+      }
+
+      const dbHotspots: VehicleHotspot[] = data.map((row: any) => {
+        const imageId = row.image_id || row.imageId || undefined;
+        let imageUrl = row.image_url || row.imageUrl || '';
+        if (!imageUrl && imageId && imgMap.has(imageId)) {
+          imageUrl = imgMap.get(imageId) || '';
+        }
+        if (!imageUrl && vehicleImages.length > 0) {
+          imageUrl = vehicleImages[0].url;
+        }
+
+        return {
+          id: row.id,
+          vehicleId: row.vehicle_id || vehicleId,
+          title: row.title || 'Ponto de Interesse',
+          posX: Number(row.pos_x ?? row.posX ?? 50),
+          posY: Number(row.pos_y ?? row.posY ?? 50),
+          frameNumber: Number(row.frame_number ?? row.frameNumber ?? row.frame_index ?? 0),
+          imageId,
+          imageUrl,
+          active: row.active !== false,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        };
+      });
+
+      // Merge with any local hotspots that aren't synced yet
+      const map = new Map<string, VehicleHotspot>();
+      for (const item of dbHotspots) {
+        map.set(item.id, item);
+      }
+      for (const local of localHotspots) {
+        if (!map.has(local.id)) {
+          map.set(local.id, local);
+        }
+      }
+
+      const merged = Array.from(map.values());
+      setLocalHotspots(vehicleId, merged);
+      return merged;
+    } catch (err) {
+      console.warn('Error fetching hotspots from Supabase:', err);
+      return localHotspots;
+    }
+  },
+
+  /**
+   * Save or update a POI Hotspot in vehicle_hotspots
+   */
+  async saveHotspot(hotspot: Omit<VehicleHotspot, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Promise<VehicleHotspot> {
+    const timestamp = new Date().toISOString();
+    const localId = hotspot.id || `poi_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const fullHotspot: VehicleHotspot = {
+      id: localId,
+      vehicleId: hotspot.vehicleId,
+      title: hotspot.title,
+      posX: hotspot.posX,
+      posY: hotspot.posY,
+      frameNumber: hotspot.frameNumber,
+      imageId: hotspot.imageId,
+      imageUrl: hotspot.imageUrl,
+      active: hotspot.active !== false,
+      createdAt: timestamp,
+      updatedAt: timestamp
+    };
+
+    // Update local cache immediately
+    const currentLocal = getLocalHotspots(hotspot.vehicleId);
+    const filteredLocal = currentLocal.filter(h => h.id !== localId);
+    setLocalHotspots(hotspot.vehicleId, [...filteredLocal, fullHotspot]);
+
+    if (!isUuid(hotspot.vehicleId)) {
+      return fullHotspot;
+    }
+
+    try {
+      const payload: any = {
+        vehicle_id: hotspot.vehicleId,
+        title: hotspot.title,
+        pos_x: hotspot.posX,
+        pos_y: hotspot.posY,
+        frame_number: hotspot.frameNumber,
+        image_id: hotspot.imageId && isUuid(hotspot.imageId) ? hotspot.imageId : null,
+        active: hotspot.active !== false
+      };
+
+      const saved = await safeInsertOrUpdate('vehicle_hotspots', isUuid(hotspot.id || '') ? hotspot.id : undefined, payload);
+      if (saved?.id) {
+        fullHotspot.id = saved.id;
+        const updatedLocal = getLocalHotspots(hotspot.vehicleId).filter(h => h.id !== localId && h.id !== saved.id);
+        setLocalHotspots(hotspot.vehicleId, [...updatedLocal, fullHotspot]);
+      }
+    } catch (err) {
+      console.warn('Error saving vehicle_hotspots to Supabase, local cache retained:', err);
+    }
+
+    return fullHotspot;
+  },
+
+  /**
+   * Delete a POI Hotspot (ONLY deletes from vehicle_hotspots, NEVER deletes vehicle images)
+   */
+  async deleteHotspot(hotspotId: string, vehicleId: string): Promise<void> {
+    // 1. Remove from local storage
+    const currentLocal = getLocalHotspots(vehicleId);
+    const updated = currentLocal.filter(h => h.id !== hotspotId);
+    setLocalHotspots(vehicleId, updated);
+
+    // 2. If valid UUID, delete from vehicle_hotspots
+    if (isUuid(hotspotId)) {
+      try {
+        const { error } = await supabase
+          .from('vehicle_hotspots')
+          .delete()
+          .eq('id', hotspotId);
+
+        if (error) {
+          console.warn('Error deleting hotspot from Supabase:', error.message);
+        }
+      } catch (err) {
+        console.warn('Error deleting vehicle_hotspots:', err);
+      }
+    }
   }
 };

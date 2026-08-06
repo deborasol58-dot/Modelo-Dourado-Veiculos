@@ -12,11 +12,11 @@ import {
   ShieldCheck, FileText, ChevronDown, ChevronUp, Camera, AlertCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Car, LeadMessage, Vehicle360, DamageMarker, VehicleInspectionItem } from '../types';
+import { Car, LeadMessage, Vehicle360, DamageMarker, VehicleHotspot } from '../types';
 import { vehicle360Service } from '../services/vehicle360.service';
-import { inspectionService } from '../services/inspectionService';
 import { getMarkerPositionForFrame } from '../utils/markerUtils';
-import ClientInspectionPanel from './ClientInspectionPanel';
+import ClientPoiPanel from './ClientPoiPanel';
+import PoiPhotoModal from './360/PoiPhotoModal';
 
 const HOTSPOT_VISIBLE_RANGE = 2;
 
@@ -39,24 +39,19 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
   const [leadEmail, setLeadEmail] = useState('');
   const [leadMessage, setLeadMessage] = useState(`Olá, tenho interesse neste ${car.brand} ${car.model} ${car.year}. Gostaria de receber um orçamento.`);
   
-  // Live 360 project and markers from Supabase
+  // Live 360 project, markers and POIs from Supabase
   const [project360, setProject360] = useState<Vehicle360 | null>(null);
   const [markers360, setMarkers360] = useState<DamageMarker[]>([]);
-  const [inspectionItems360, setInspectionItems360] = useState<any[]>([]);
-  const [technicalInspections, setTechnicalInspections] = useState<VehicleInspectionItem[]>([]);
+  const [hotspots360, setHotspots360] = useState<VehicleHotspot[]>([]);
   const [loading360, setLoading360] = useState(true);
-  const [loadingInspection, setLoadingInspection] = useState(true);
   const [currentFrame360, setCurrentFrame360] = useState(0);
   const [isPlaying360, setIsPlaying360] = useState(false);
 
-  // Inline Inspection Panel States (NO MODAL)
-  const [selectedInlineInspection, setSelectedInlineInspection] = useState<VehicleInspectionItem | null>(null);
+  // POI & Damage Selection States
+  const [selectedInlineHotspot, setSelectedInlineHotspot] = useState<VehicleHotspot | null>(null);
   const [selectedInlineMarker, setSelectedInlineMarker] = useState<DamageMarker | null>(null);
-  const [inlineTab, setInlineTab] = useState<'inspecao' | 'hotspots'>('inspecao');
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({
-    Exterior: true,
-    Interior: true
-  });
+  const [selectedPoiModalId, setSelectedPoiModalId] = useState<string | null>(null);
+  const [activePoiTab, setActivePoiTab] = useState<'pois' | 'avarias'>('pois');
 
   // Lightbox for full-resolution photo inspection
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -104,10 +99,12 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
           setGalleryLightboxIndex(null);
           setGalleryZoom(1);
           setGalleryPan({ x: 0, y: 0 });
+        } else if (selectedPoiModalId) {
+          setSelectedPoiModalId(null);
         } else if (selectedInlineMarker) {
           setSelectedInlineMarker(null);
-        } else if (selectedInlineInspection) {
-          setSelectedInlineInspection(null);
+        } else if (selectedInlineHotspot) {
+          setSelectedInlineHotspot(null);
         }
       } else if (galleryLightboxIndex !== null && car.images && car.images.length > 0) {
         if (e.key === 'ArrowLeft') {
@@ -123,34 +120,30 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lightboxImage, galleryLightboxIndex, selectedInlineMarker, selectedInlineInspection, car.images]);
+  }, [lightboxImage, galleryLightboxIndex, selectedPoiModalId, selectedInlineMarker, selectedInlineHotspot, car.images]);
 
   // Drag-to-rotate states
   const [isDragging360, setIsDragging360] = useState(false);
   const startX360Ref = useRef(0);
   const currentFrameOnStart360Ref = useRef(0);
 
-  // Load 360 assets and inspection data
+  // Load 360 assets, markers, and POI hotspots
   useEffect(() => {
     const fetch360Data = async () => {
       setLoading360(true);
-      setLoadingInspection(true);
       try {
-        const [proj, marks, inspections, technicalList] = await Promise.all([
+        const [proj, marks, pois] = await Promise.all([
           vehicle360Service.get360ByVehicleId(car.id),
           vehicle360Service.getMarkersByVehicleId(car.id),
-          vehicle360Service.getInspectionItemsByVehicleId(car.id),
-          inspectionService.getInspection(car.id)
+          vehicle360Service.getHotspotsByVehicleId(car.id)
         ]);
         setProject360(proj);
         setMarkers360(marks);
-        setInspectionItems360(inspections);
-        setTechnicalInspections(technicalList);
+        setHotspots360(pois);
       } catch (err) {
         console.error('Error loading public 360 data:', err);
       } finally {
         setLoading360(false);
-        setLoadingInspection(false);
       }
     };
     fetch360Data();
@@ -492,18 +485,14 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                   <span>Arraste para girar o carro</span>
                 </div>
 
-                {/* Active Inspection Items Overlay */}
-                {inspectionItems360.filter(item => item.frameIndex === currentFrame360 && item.posX != null && item.posY != null).map(item => {
-                  const isAvaria = item.status === 'Avaria';
-                  const isTech = item.status === 'OK' || item.status === 'Atenção';
-                  if (!isAvaria && !isTech) return null; // Don't show if it's 'Não Inspecionado' or unexpected status
-
+                {/* Active Points of Interest (POIs) Hotspots Overlay */}
+                {hotspots360.filter(h => isMarkerVisibleOnFrame(h.frame_number, currentFrame360)).map(hotspot => {
                   return (
                     <div
-                      key={item.id}
+                      key={hotspot.id}
                       style={{ 
-                        top: `${item.posY}%`, 
-                        left: `${item.posX}%`,
+                        top: `${hotspot.pos_y}%`, 
+                        left: `${hotspot.pos_x}%`,
                         transform: `translate(-50%, -50%)`,
                         transition: 'all 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
                       }}
@@ -513,37 +502,25 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
-                          const match = technicalInspections.find(t => t.itemName.toLowerCase() === item.name.toLowerCase() || t.id === item.id);
-                          if (match) {
-                            setSelectedInlineInspection(match);
-                          } else {
-                            setSelectedInlineInspection({
-                              id: item.id,
-                              projectId: car.id,
-                              category: item.groupName || 'Exterior',
-                              itemName: item.name,
-                              status: item.status === 'Avaria' ? 'Problema' : item.status === 'Atenção' ? 'Atenção' : 'OK',
-                              notes: item.description || '',
-                              photos: item.images || []
-                            });
-                          }
-                          setSelectedInlineMarker(null);
-                          setInlineTab('inspecao');
-                          const elem = document.getElementById('inspection-panel-section');
-                          if (elem) elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                          setSelectedInlineHotspot(hotspot);
+                          setSelectedPoiModalId(hotspot.id);
                         }}
                         className="relative cursor-pointer transition-transform duration-200 hover:scale-125 focus:outline-none"
+                        title={hotspot.title}
                       >
-                        <span className={`absolute -inset-2 rounded-full animate-ping pointer-events-none ${isAvaria ? 'bg-red-500/40' : 'bg-amber-400/40'}`} />
-                        <div className={`relative w-6 h-6 sm:w-7 sm:h-7 rounded-full border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ${isAvaria ? 'bg-red-600 ring-red-500/50' : 'bg-amber-500 ring-amber-400/50'}`}>
-                          <span className="w-2.5 h-2.5 rounded-full bg-white shadow-inner" />
+                        {/* Pulse Ring */}
+                        <span className="absolute -inset-2 rounded-full bg-red-500/40 animate-ping pointer-events-none" />
+                        {/* Inner Marker Circle with Camera Icon */}
+                        <div className="relative w-8 h-8 rounded-full bg-red-600 border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ring-red-500/50">
+                          <Camera className="w-4 h-4 text-white" />
                         </div>
                       </button>
 
+                      {/* Hover Tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 transition-all duration-200">
                         <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-xl shadow-2xl whitespace-nowrap border border-slate-700/60 text-center space-y-0.5">
-                          <span className={`font-extrabold block ${isAvaria ? 'text-red-400' : 'text-amber-400'}`}>{item.name}</span>
-                          <span className="text-[10px] text-slate-300 font-medium block">Ver detalhes na inspeção abaixo</span>
+                          <span className="font-extrabold block text-red-400">{hotspot.title}</span>
+                          <span className="text-[10px] text-slate-300 font-medium block">Clique para ver a foto técnica</span>
                         </div>
                         <div className="w-2.5 h-2.5 bg-slate-900/95 rotate-45 -mt-1.5 border-r border-b border-slate-700/60" />
                       </div>
@@ -573,26 +550,26 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
                         onClick={(e) => {
                           e.stopPropagation();
                           setSelectedInlineMarker(marker);
-                          setSelectedInlineInspection(null);
-                          setInlineTab('hotspots');
-                          const elem = document.getElementById('inspection-panel-section');
+                          setSelectedInlineHotspot(null);
+                          setActivePoiTab('avarias');
+                          const elem = document.getElementById('poi-panel-section');
                           if (elem) elem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                         }}
                         className="relative cursor-pointer transition-transform duration-200 hover:scale-125 focus:outline-none"
                       >
                         {/* Pulse Ring */}
-                        <span className="absolute -inset-2 rounded-full bg-red-500/40 animate-ping pointer-events-none" />
+                        <span className="absolute -inset-2 rounded-full bg-amber-500/40 animate-ping pointer-events-none" />
                         {/* Inner Marker Circle */}
-                        <div className="relative w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-red-600 border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ring-red-500/50">
-                          <span className="w-2.5 h-2.5 rounded-full bg-white shadow-inner" />
+                        <div className="relative w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-amber-500 border-2 border-white shadow-xl flex items-center justify-center text-white ring-2 ring-amber-500/50">
+                          <AlertTriangle className="w-3.5 h-3.5 text-white" />
                         </div>
                       </button>
 
                       {/* Hover Tooltip */}
                       <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:flex flex-col items-center pointer-events-none z-30 transition-all duration-200">
                         <div className="bg-slate-900/95 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-xl shadow-2xl whitespace-nowrap border border-slate-700/60 text-center space-y-0.5">
-                          <span className="font-extrabold block text-red-400">{marker.title}</span>
-                          <span className="text-[10px] text-slate-300 font-medium block">Ver detalhes na inspeção abaixo</span>
+                          <span className="font-extrabold block text-amber-400">{marker.title}</span>
+                          <span className="text-[10px] text-slate-300 font-medium block">Ver detalhes da avaria</span>
                         </div>
                         <div className="w-2.5 h-2.5 bg-slate-900/95 rotate-45 -mt-1.5 border-r border-b border-slate-700/60" />
                       </div>
@@ -703,23 +680,30 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
             </div>
           )}
 
-          {/* INLINE TECHNICAL INSPECTION AND HOTSPOTS PANEL */}
-          <ClientInspectionPanel
-            items={technicalInspections}
-            markers={markers360}
-            selectedItem={selectedInlineInspection}
-            selectedMarker={selectedInlineMarker}
-            onSelectItem={(item) => setSelectedInlineInspection(item)}
-            onSelectMarker={(marker) => setSelectedInlineMarker(marker)}
-            onSelectFrame={(frameIdx) => setCurrentFrame360(frameIdx)}
-            onOpenLightbox={(url) => {
-              setLightboxImage(url);
-              setLightboxZoom(1);
-              setLightboxPan({ x: 0, y: 0 });
-            }}
-            inlineTab={inlineTab}
-            onTabChange={(tab) => setInlineTab(tab)}
-          />
+          {/* INLINE POINTS OF INTEREST AND AVARIAS PANEL */}
+          <div id="poi-panel-section">
+            <ClientPoiPanel
+              hotspots={hotspots360}
+              markers={markers360}
+              selectedHotspot={selectedInlineHotspot}
+              selectedMarker={selectedInlineMarker}
+              onSelectHotspot={(h) => {
+                setSelectedInlineHotspot(h);
+                if (h) {
+                  setSelectedPoiModalId(h.id);
+                }
+              }}
+              onSelectMarker={(marker) => setSelectedInlineMarker(marker)}
+              onRotateToFrame={(frameIdx) => setCurrentFrame360(frameIdx)}
+              onOpenLightbox={(url) => {
+                setLightboxImage(url);
+                setLightboxZoom(1);
+                setLightboxPan({ x: 0, y: 0 });
+              }}
+              activeTab={activePoiTab}
+              onTabChange={(tab) => setActivePoiTab(tab)}
+            />
+          </div>
         </section>
 
         {/* Content sections: About, Features & Technical Tables */}
@@ -1195,6 +1179,17 @@ export default function CarDetails({ car, onBack, onSubmitLead }: CarDetailsProp
           </div>
         )}
       </AnimatePresence>
+
+      {/* POI High-Resolution Photo Viewer Modal */}
+      {selectedPoiModalId && (
+        <PoiPhotoModal
+          hotspots={hotspots360}
+          currentHotspotId={selectedPoiModalId}
+          onClose={() => setSelectedPoiModalId(null)}
+          onSelectHotspot={(h) => setSelectedPoiModalId(h.id)}
+          onRotateToFrame={(frame) => setCurrentFrame360(frame)}
+        />
+      )}
     </div>
   );
 }

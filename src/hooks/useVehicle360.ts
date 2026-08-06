@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Vehicle360, DamageMarker, InspectionItem } from '../types';
+import { Vehicle360, DamageMarker, InspectionItem, VehicleHotspot } from '../types';
 import { vehicle360Service } from '../services/vehicle360.service';
 
-export function useVehicle360(vehicleId: string | null) {
+export function useVehicle360(vehicleId: string | null, fallbackImages?: string[]) {
   const [loading, setLoading] = useState(false);
   const [project, setProject] = useState<Vehicle360 | null>(null);
   const [markers, setMarkers] = useState<DamageMarker[]>([]);
+  const [hotspots, setHotspots] = useState<VehicleHotspot[]>([]);
+  const [vehicleImages, setVehicleImages] = useState<{ id: string; url: string; title?: string }[]>([]);
   const [inspectionItems, setInspectionItems] = useState<InspectionItem[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -13,6 +15,8 @@ export function useVehicle360(vehicleId: string | null) {
     if (!vehicleId) {
       setProject(null);
       setMarkers([]);
+      setHotspots([]);
+      setVehicleImages([]);
       setInspectionItems([]);
       return;
     }
@@ -20,14 +24,18 @@ export function useVehicle360(vehicleId: string | null) {
     setLoading(true);
     setError(null);
     try {
-      const [projData, markersData, inspectionData] = await Promise.all([
+      const [projData, markersData, hotspotsData, imagesData, inspectionData] = await Promise.all([
         vehicle360Service.get360ByVehicleId(vehicleId),
         vehicle360Service.getMarkersByVehicleId(vehicleId),
+        vehicle360Service.getHotspotsByVehicleId(vehicleId),
+        vehicle360Service.getVehicleImages(vehicleId, fallbackImages),
         vehicle360Service.getInspectionItemsByVehicleId(vehicleId)
       ]);
 
       setProject(projData);
       setMarkers(markersData);
+      setHotspots(hotspotsData);
+      setVehicleImages(imagesData);
       setInspectionItems(inspectionData);
     } catch (err: any) {
       console.error('Error fetching vehicle 360 data:', err);
@@ -35,7 +43,7 @@ export function useVehicle360(vehicleId: string | null) {
     } finally {
       setLoading(false);
     }
-  }, [vehicleId]);
+  }, [vehicleId, fallbackImages?.length]);
 
   useEffect(() => {
     fetch360Data();
@@ -53,13 +61,6 @@ export function useVehicle360(vehicleId: string | null) {
         status
       });
       
-      // Auto-create inspection items when a project is saved if they don't exist
-      if (images.length > 0) {
-        await vehicle360Service.createDefaultInspectionItems(vehicleId);
-        const newItems = await vehicle360Service.getInspectionItemsByVehicleId(vehicleId);
-        setInspectionItems(newItems);
-      }
-      
       setProject(saved);
       return saved;
     } catch (err: any) {
@@ -67,6 +68,35 @@ export function useVehicle360(vehicleId: string | null) {
       throw err;
     } finally {
       setLoading(false);
+    }
+  };
+
+  const saveHotspot = async (hotspotData: Omit<VehicleHotspot, 'id' | 'vehicleId' | 'createdAt' | 'updatedAt'> & { id?: string }) => {
+    if (!vehicleId) return null;
+    try {
+      const saved = await vehicle360Service.saveHotspot({
+        ...hotspotData,
+        vehicleId
+      });
+      setHotspots(prev => {
+        const filtered = prev.filter(h => h.id !== saved.id);
+        return [...filtered, saved];
+      });
+      return saved;
+    } catch (err: any) {
+      console.error('Error saving vehicle hotspot:', err);
+      throw err;
+    }
+  };
+
+  const deleteHotspot = async (hotspotId: string) => {
+    if (!vehicleId) return;
+    try {
+      await vehicle360Service.deleteHotspot(hotspotId, vehicleId);
+      setHotspots(prev => prev.filter(h => h.id !== hotspotId));
+    } catch (err: any) {
+      console.error('Error deleting vehicle hotspot:', err);
+      throw err;
     }
   };
 
@@ -125,6 +155,7 @@ export function useVehicle360(vehicleId: string | null) {
       await vehicle360Service.delete360Project(vehicleId);
       setProject(null);
       setMarkers([]);
+      setHotspots([]);
     } catch (err: any) {
       console.error('Error deleting 360 project:', err);
       throw err;
@@ -137,10 +168,14 @@ export function useVehicle360(vehicleId: string | null) {
     loading,
     project,
     markers,
+    hotspots,
+    vehicleImages,
     inspectionItems,
     error,
     refresh: fetch360Data,
     saveProject,
+    saveHotspot,
+    deleteHotspot,
     saveMarker,
     deleteMarker,
     saveInspectionItem,

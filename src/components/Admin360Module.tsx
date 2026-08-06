@@ -2,13 +2,35 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   RotateCcw, Upload, Plus, Trash2, Settings, Image as ImageIcon,
   ChevronLeft, ChevronRight, X, Play, Pause, Loader2, CheckCircle2, 
-  AlertCircle, MapPin, Eye, Search, Layers, Grid, List, ArrowLeft, Move
+  AlertCircle, MapPin, Eye, Search, Layers, Grid, List, ArrowLeft, Move,
+  Camera, Check, Sparkles, Maximize2, Edit3, HelpCircle
 } from 'lucide-react';
-import { Car as CarType, Vehicle360, DamageMarker, DamageCategory } from '../types';
+import { Car as CarType, Vehicle360, DamageMarker, DamageCategory, VehicleHotspot } from '../types';
 import { useVehicle360 } from '../hooks/useVehicle360';
 import { vehicle360Service } from '../services/vehicle360.service';
 import { getMarkerPositionForFrame } from '../utils/markerUtils';
-import TechnicalInspectionModule from './TechnicalInspectionModule';
+import PoiPhotoModal from './360/PoiPhotoModal';
+
+const SUGGESTED_POI_TITLES = [
+  'Motor',
+  'Painel',
+  'Porta-malas',
+  'Roda Dianteira',
+  'Roda Traseira',
+  'Interior',
+  'Banco Traseiro',
+  'Porta Motorista',
+  'Porta Passageiro',
+  'Capô',
+  'Chassi',
+  'Documento',
+  'Farol Dianteiro',
+  'Lanterna Traseira',
+  'Teto',
+  'Central Multimídia',
+  'Volante',
+  'Retrovisor'
+];
 
 interface Admin360ModuleProps {
   cars: CarType[];
@@ -24,14 +46,16 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
     loading,
     project,
     markers,
-    inspectionItems,
+    hotspots,
+    vehicleImages,
     saveProject,
+    saveHotspot,
+    deleteHotspot,
     saveMarker,
     deleteMarker,
-    saveInspectionItem,
     deleteProject,
     refresh
-  } = useVehicle360(selectedVehicle ? selectedVehicle.id : null);
+  } = useVehicle360(selectedVehicle ? selectedVehicle.id : null, selectedVehicle?.images);
 
   const brands = useMemo(() => {
     const list = new Set(cars.map(c => c.brand));
@@ -78,7 +102,7 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
             setSelectedVehicle(null);
             refresh();
           }}
-          className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 font-bold text-sm bg-white border border-slate-200 rounded-xl px-4 py-2 transition-all cursor-pointer shadow-sm hover:shadow"
+          className="inline-flex items-center gap-2 text-slate-600 hover:text-slate-900 font-bold text-sm bg-white border border-slate-200 rounded-xl px-4 py-2 transition-all cursor-pointer shadow-xs hover:shadow"
         >
           <ArrowLeft className="w-4 h-4" />
           <span>Voltar para Lista de Veículos</span>
@@ -111,12 +135,14 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
           <Editor360
             vehicle={selectedVehicle}
             project={project}
+            hotspots={hotspots}
+            vehicleImages={vehicleImages}
             markers={markers}
-            inspectionItems={inspectionItems}
             saveProject={saveProject}
+            saveHotspot={saveHotspot}
+            deleteHotspot={deleteHotspot}
             saveMarker={saveMarker}
             deleteMarker={deleteMarker}
-            saveInspectionItem={saveInspectionItem}
             deleteProject={deleteProject}
             loading={loading}
           />
@@ -156,12 +182,11 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCars.map(car => {
             const status = statuses[car.id] || 'draft';
-            const frameCount = status !== 'draft' ? 'Disponível' : 'Nenhum';
 
             return (
               <div 
                 key={car.id} 
-                className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all flex flex-col justify-between group"
+                className="bg-white border border-slate-100 rounded-2xl overflow-hidden shadow-xs hover:shadow-md transition-all flex flex-col justify-between group"
               >
                 <div className="relative aspect-video bg-slate-100 overflow-hidden">
                   <img 
@@ -178,25 +203,25 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
                         ? 'bg-amber-950/80 text-amber-300 border-amber-800/50'
                         : 'bg-slate-950/80 text-slate-300 border-slate-800/50'
                     }`}>
-                      {status === 'completed' ? 'Concluído' : status === 'processing' ? 'Em andamento' : 'Não iniciado'}
+                      {status === 'completed' ? '360° Ativo' : status === 'processing' ? 'Em Edição' : 'Pendente'}
                     </span>
                   </div>
                 </div>
 
-                <div className="p-5 flex-1 flex flex-col justify-between">
-                  <div className="space-y-1.5">
-                    <h4 className="font-extrabold text-lg text-slate-900 leading-tight">
-                      {car.brand} <span className="text-red-600">{car.model}</span>
+                <div className="p-5 flex flex-col justify-between flex-1 gap-4">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase text-red-600 tracking-wider">
+                      {car.brand}
+                    </span>
+                    <h4 className="font-extrabold text-slate-900 text-base line-clamp-1 mt-0.5">
+                      {car.model}
                     </h4>
-                    <p className="text-xs text-slate-400 font-medium">{car.version}</p>
-                    <div className="flex items-center gap-2 pt-2 text-[11px] font-bold text-slate-500">
-                      <span>Ano: {car.year}</span>
-                      <span>•</span>
-                      <span>KM: {car.km.toLocaleString('pt-BR')}</span>
-                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {car.year} • {car.color}
+                    </p>
                   </div>
 
-                  <div className="pt-5 border-t border-slate-100 mt-5 flex items-center justify-between">
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between">
                     <div className="text-xs">
                       <span className="text-slate-400 block font-medium">Visualização 360°</span>
                       <span className={`font-bold block ${status !== 'draft' ? 'text-emerald-600' : 'text-slate-500'}`}>
@@ -205,7 +230,7 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
                     </div>
                     <button
                       onClick={() => setSelectedVehicle(car)}
-                      className="px-4 py-2 bg-slate-900 hover:bg-red-600 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm"
+                      className="px-4 py-2 bg-slate-900 hover:bg-red-600 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs"
                     >
                       <RotateCcw className="w-3.5 h-3.5" />
                       <span>Configurar 360°</span>
@@ -233,12 +258,14 @@ export default function Admin360Module({ cars }: Admin360ModuleProps) {
 interface Editor360Props {
   vehicle: CarType;
   project: Vehicle360 | null;
+  hotspots: VehicleHotspot[];
+  vehicleImages: { id: string; url: string; title?: string }[];
   markers: DamageMarker[];
-  inspectionItems: any[];
   saveProject: (framesCount: number, images: string[], status: Vehicle360['status']) => Promise<any>;
+  saveHotspot: (hotspot: Omit<VehicleHotspot, 'id' | 'vehicleId' | 'createdAt' | 'updatedAt'> & { id?: string }) => Promise<any>;
+  deleteHotspot: (hotspotId: string) => Promise<any>;
   saveMarker: (marker: Omit<DamageMarker, 'id' | 'vehicleId' | 'createdAt'> & { id?: string }) => Promise<any>;
   deleteMarker: (markerId: string) => Promise<any>;
-  saveInspectionItem: (item: any) => Promise<any>;
   deleteProject: () => Promise<any>;
   loading: boolean;
 }
@@ -246,39 +273,48 @@ interface Editor360Props {
 function Editor360({
   vehicle,
   project,
+  hotspots,
+  vehicleImages,
   markers,
-  inspectionItems,
   saveProject,
+  saveHotspot,
+  deleteHotspot,
   saveMarker,
   deleteMarker,
-  saveInspectionItem,
   deleteProject,
   loading
 }: Editor360Props) {
-  const [activeTab, setActiveTab] = useState<'imagens' | 'hotspots' | 'inspecao' | 'configuracoes'>('imagens');
+  const [activeTab, setActiveTab] = useState<'imagens' | 'pois' | 'avarias' | 'configuracoes'>('pois');
   const [currentFrame, setCurrentFrame] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
+
+  // POI Creation State
+  const [isCreatingPoi, setIsCreatingPoi] = useState(false);
+  const [selectedPoiImage, setSelectedPoiImage] = useState<{ id: string; url: string } | null>(null);
+  const [poiTitle, setPoiTitle] = useState('');
+  const [newPoiPos, setNewPoiPos] = useState<{ x: number; y: number } | null>(null);
+  const [savingPoi, setSavingPoi] = useState(false);
+
+  // POI Edit State
+  const [editingPoi, setEditingPoi] = useState<VehicleHotspot | null>(null);
+  const [isRepositioningPoi, setIsRepositioningPoi] = useState(false);
+
+  // POI Modal Preview State
+  const [previewHotspotId, setPreviewHotspotId] = useState<string | null>(null);
+
+  // Avarias / Damage Marker State
   const [addMarkerMode, setAddMarkerMode] = useState(false);
-
-  // Images state
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-
-  // Selected marker state for details view/edit
-  const [selectedMarker, setSelectedMarker] = useState<DamageMarker | null>(null);
-  const [isRepositioning, setIsRepositioning] = useState(false);
-
-  // Hotspot Marker placement state
   const [newMarkerPos, setNewMarkerPos] = useState<{ x: number; y: number } | null>(null);
   const [markerTitle, setMarkerTitle] = useState('');
   const [markerDescription, setMarkerDescription] = useState('');
   const [markerCategory, setMarkerCategory] = useState<DamageCategory>('Arranhão');
   const [damageImages, setDamageImages] = useState<string[]>([]);
+  const [selectedMarker, setSelectedMarker] = useState<DamageMarker | null>(null);
   const [damageUploading, setDamageUploading] = useState(false);
 
-  const [selectedInspectionItem, setSelectedInspectionItem] = useState<any | null>(null);
-  const [isPositioningInspectionItem, setIsPositioningInspectionItem] = useState(false);
-  const [inspectionImageUploading, setInspectionImageUploading] = useState(false);
+  // Upload frames state
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Settings state
   const [framesCount, setFramesCount] = useState<number>(36);
@@ -301,7 +337,7 @@ function Editor360({
     return () => clearInterval(interval);
   }, [isPlaying, project]);
 
-  // Handle syncing settings fields on load
+  // Sync settings
   useEffect(() => {
     if (project) {
       setFramesCount(project.framesCount);
@@ -313,9 +349,26 @@ function Editor360({
     return project?.images || [];
   }, [project]);
 
+  // All available vehicle images (from DB + vehicle object fallback)
+  const availableImages = useMemo(() => {
+    if (vehicleImages.length > 0) return vehicleImages;
+    return (vehicle.images || []).map((url, idx) => ({
+      id: `fallback_${idx}`,
+      url,
+      title: `Foto ${idx + 1}`
+    }));
+  }, [vehicleImages, vehicle.images]);
+
+  // Set default selected image for new POI
+  useEffect(() => {
+    if (isCreatingPoi && !selectedPoiImage && availableImages.length > 0) {
+      setSelectedPoiImage(availableImages[0]);
+    }
+  }, [isCreatingPoi, selectedPoiImage, availableImages]);
+
   // Handle dragging rotation
   const handleMouseDown = (e: React.MouseEvent) => {
-    if (addMarkerMode || isPositioningInspectionItem || frames.length === 0) return;
+    if (isCreatingPoi || isRepositioningPoi || addMarkerMode || frames.length === 0) return;
     isDragging.current = true;
     startX.current = e.clientX;
     startFrame.current = currentFrame;
@@ -325,7 +378,6 @@ function Editor360({
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isDragging.current || frames.length === 0) return;
     const deltaX = e.clientX - startX.current;
-    // Every 15px is a frame rotation
     const framesDiff = Math.floor(deltaX / 15);
     let targetFrame = (startFrame.current - framesDiff) % frames.length;
     if (targetFrame < 0) {
@@ -338,215 +390,133 @@ function Editor360({
     isDragging.current = false;
   };
 
-  // Handle clicking canvas for marker placement or re-positioning
+  // Handle clicking canvas for POI placement, repositioning, or damage marker
   const handleCanvasClick = async (e: React.MouseEvent<HTMLDivElement>) => {
     if (frames.length === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = Math.round(((e.clientX - rect.left) / rect.width) * 1000) / 10;
     const y = Math.round(((e.clientY - rect.top) / rect.height) * 1000) / 10;
 
+    // 1. Placing new POI
+    if (isCreatingPoi) {
+      setNewPoiPos({ x, y });
+      return;
+    }
+
+    // 2. Repositioning existing POI
+    if (isRepositioningPoi && editingPoi) {
+      try {
+        setSavingPoi(true);
+        const updated = await saveHotspot({
+          ...editingPoi,
+          posX: x,
+          posY: y,
+          frameNumber: currentFrame
+        });
+        setEditingPoi(updated);
+        setIsRepositioningPoi(false);
+      } catch (err) {
+        console.error('Error repositioning POI:', err);
+      } finally {
+        setSavingPoi(false);
+      }
+      return;
+    }
+
+    // 3. Placing damage marker
     if (addMarkerMode) {
       setNewMarkerPos({ x, y });
       setAddMarkerMode(false);
       setSelectedMarker(null);
-      setIsRepositioning(false);
+      return;
+    }
+  };
+
+  // Save new POI
+  const handleSaveNewPoi = async () => {
+    if (!selectedPoiImage) {
+      alert('Selecione uma foto do veículo.');
+      return;
+    }
+    if (!poiTitle.trim()) {
+      alert('Informe um título para o ponto de interesse (Ex: Motor, Painel).');
+      return;
+    }
+    if (!newPoiPos) {
+      alert('Clique sobre o veículo no visualizador para definir a posição do ponto.');
       return;
     }
 
-    if (isPositioningInspectionItem && selectedInspectionItem) {
+    setSavingPoi(true);
+    try {
+      await saveHotspot({
+        title: poiTitle.trim(),
+        posX: newPoiPos.x,
+        posY: newPoiPos.y,
+        frameNumber: currentFrame,
+        imageId: selectedPoiImage.id.startsWith('fallback_') ? undefined : selectedPoiImage.id,
+        imageUrl: selectedPoiImage.url,
+        active: true
+      });
+
+      // Reset create state
+      setIsCreatingPoi(false);
+      setNewPoiPos(null);
+      setPoiTitle('');
+      setSelectedPoiImage(null);
+    } catch (err) {
+      console.error('Error saving POI:', err);
+      alert('Erro ao salvar ponto de interesse.');
+    } finally {
+      setSavingPoi(false);
+    }
+  };
+
+  // Save edited POI
+  const handleSaveEditPoi = async () => {
+    if (!editingPoi) return;
+    if (!editingPoi.title.trim()) {
+      alert('Informe um título.');
+      return;
+    }
+
+    setSavingPoi(true);
+    try {
+      await saveHotspot({
+        id: editingPoi.id,
+        title: editingPoi.title.trim(),
+        posX: editingPoi.posX,
+        posY: editingPoi.posY,
+        frameNumber: editingPoi.frameNumber,
+        imageId: editingPoi.imageId,
+        imageUrl: editingPoi.imageUrl,
+        active: editingPoi.active !== false
+      });
+      setEditingPoi(null);
+      setIsRepositioningPoi(false);
+    } catch (err) {
+      console.error('Error updating POI:', err);
+    } finally {
+      setSavingPoi(false);
+    }
+  };
+
+  // Delete POI
+  const handleDeletePoi = async (poiId: string) => {
+    if (confirm('Deseja realmente remover este ponto de interesse? (A imagem original do veículo NÃO será excluída)')) {
       try {
-        const updated = await saveInspectionItem({
-          ...selectedInspectionItem,
-          frameIndex: currentFrame,
-          posX: x,
-          posY: y
-        });
-        setSelectedInspectionItem(updated);
-        setIsPositioningInspectionItem(false);
+        await deleteHotspot(poiId);
+        if (editingPoi?.id === poiId) {
+          setEditingPoi(null);
+          setIsRepositioningPoi(false);
+        }
       } catch (err) {
-        console.error('Error positioning item:', err);
+        console.error('Error deleting POI:', err);
       }
-      return;
-    }
-
-    if (isRepositioning && selectedMarker) {
-      await handleSetFramePosition(x, y);
     }
   };
 
-  const handleSetFramePosition = async (x: number, y: number) => {
-    if (!selectedMarker) return;
-
-    const existingPositions = selectedMarker.framePositions || {
-      [selectedMarker.frameIndex]: { posX: selectedMarker.posX, posY: selectedMarker.posY }
-    };
-
-    const updatedPositions = {
-      ...existingPositions,
-      [currentFrame]: { posX: x, posY: y }
-    };
-
-    try {
-      const saved = await saveMarker({
-        id: selectedMarker.id,
-        title: selectedMarker.title,
-        description: selectedMarker.description,
-        category: selectedMarker.category,
-        damageImages: selectedMarker.damageImages,
-        frameIndex: selectedMarker.frameIndex,
-        posX: selectedMarker.posX,
-        posY: selectedMarker.posY,
-        framePositions: updatedPositions
-      });
-      setSelectedMarker(saved);
-      setIsRepositioning(false);
-    } catch (err) {
-      console.error('Error saving frame position:', err);
-    }
-  };
-
-  const handleRemoveFramePosition = async (frameIdxToRemove: number) => {
-    if (!selectedMarker) return;
-
-    const existingPositions = { ...(selectedMarker.framePositions || {}) };
-    delete existingPositions[frameIdxToRemove];
-
-    try {
-      const saved = await saveMarker({
-        id: selectedMarker.id,
-        title: selectedMarker.title,
-        description: selectedMarker.description,
-        category: selectedMarker.category,
-        damageImages: selectedMarker.damageImages,
-        frameIndex: selectedMarker.frameIndex,
-        posX: selectedMarker.posX,
-        posY: selectedMarker.posY,
-        framePositions: existingPositions
-      });
-      setSelectedMarker(saved);
-    } catch (err) {
-      console.error('Error removing frame position:', err);
-    }
-  };
-
-  // File Upload drag/drop handlers
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    const files = Array.from(e.dataTransfer.files || []) as File[];
-    if (files.length > 0) {
-      await processUploads(files);
-    }
-  };
-
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []) as File[];
-    if (files.length > 0) {
-      await processUploads(files);
-    }
-  };
-
-  const processUploads = async (files: File[]) => {
-    setIsUploading(true);
-    setUploadProgress(1);
-    const uploadedUrls: string[] = [];
-
-    // Filter only images
-    const imageFiles = files.filter(f => f.type.startsWith('image/'));
-    if (imageFiles.length === 0) {
-      setIsUploading(false);
-      alert('Por favor, selecione apenas arquivos de imagem.');
-      return;
-    }
-
-    // Sort files by name to maintain order
-    imageFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
-
-    try {
-      for (let i = 0; i < imageFiles.length; i++) {
-        const file = imageFiles[i];
-        const url = await vehicle360Service.upload360Frame(vehicle.id, file);
-        uploadedUrls.push(url);
-        setUploadProgress(Math.round(((i + 1) / imageFiles.length) * 100));
-      }
-
-      // Combine with existing images or create new project
-      const currentImages = [...frames, ...uploadedUrls];
-      
-      // Auto-update or create project
-      await saveProject(framesCount, currentImages, 'processing');
-      setCurrentFrame(0);
-    } catch (err) {
-      console.error('Error uploading 360 files:', err);
-      alert('Erro ao enviar as imagens. Usando fallbacks locais se offline.');
-    } finally {
-      setIsUploading(false);
-      setUploadProgress(null);
-    }
-  };
-
-  // Handle damage images upload
-  const handleDamageImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []) as File[];
-    if (files.length === 0) return;
-
-    setDamageUploading(true);
-    try {
-      const urls: string[] = [];
-      for (const file of files) {
-        const url = await vehicle360Service.uploadDamageImage(vehicle.id, file);
-        urls.push(url);
-      }
-      setDamageImages(prev => [...prev, ...urls]);
-    } catch (err) {
-      console.error('Error uploading damage image:', err);
-    } finally {
-      setDamageUploading(false);
-    }
-  };
-
-  const handleRemoveDamageImage = (indexToRemove: number) => {
-    setDamageImages(prev => prev.filter((_, idx) => idx !== indexToRemove));
-  };
-
-  const handleInspectionImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []) as File[];
-    if (files.length === 0 || !selectedInspectionItem) return;
-
-    setInspectionImageUploading(true);
-    try {
-      const urls: string[] = [];
-      for (const file of files) {
-        const url = await vehicle360Service.uploadDamageImage(vehicle.id, file);
-        urls.push(url);
-      }
-      const updatedImages = [...(selectedInspectionItem.images || []), ...urls];
-      const updated = await saveInspectionItem({
-        ...selectedInspectionItem,
-        images: updatedImages
-      });
-      setSelectedInspectionItem(updated);
-    } catch (err) {
-      console.error('Error uploading inspection image:', err);
-    } finally {
-      setInspectionImageUploading(false);
-    }
-  };
-
-  const handleRemoveInspectionImage = async (indexToRemove: number) => {
-    if (!selectedInspectionItem) return;
-    const updatedImages = (selectedInspectionItem.images || []).filter((_: any, idx: number) => idx !== indexToRemove);
-    const updated = await saveInspectionItem({
-      ...selectedInspectionItem,
-      images: updatedImages
-    });
-    setSelectedInspectionItem(updated);
-  };
-
-  // Save new marker handler
+  // Save new damage marker
   const handleSaveNewMarker = async () => {
     if (!markerTitle || !newMarkerPos) return;
 
@@ -564,7 +534,6 @@ function Editor360({
         }
       });
 
-      // Reset
       setNewMarkerPos(null);
       setMarkerTitle('');
       setMarkerDescription('');
@@ -575,42 +544,47 @@ function Editor360({
     }
   };
 
-  // Delete project trigger
+  // Delete project
   const handleDeleteFull360 = async () => {
-    if (confirm('Deseja realmente excluir todo o projeto 360° deste veículo? Isso removerá permanentemente todos os frames e marcadores do Supabase.')) {
+    if (confirm('Deseja realmente excluir todo o projeto 360° deste veículo? Isso removerá os frames cadastrados.')) {
       await deleteProject();
       setCurrentFrame(0);
       setActiveTab('imagens');
     }
   };
 
-  // Reorder frames helper
-  const moveFrame = (index: number, direction: 'left' | 'right') => {
-    if (!project) return;
-    const newImages = [...frames];
-    const targetIndex = direction === 'left' ? index - 1 : index + 1;
+  // Upload frames
+  const processUploads = async (files: File[]) => {
+    if (files.length === 0) return;
+    setIsUploading(true);
+    setUploadProgress(0);
 
-    if (targetIndex < 0 || targetIndex >= newImages.length) return;
+    const sortedFiles = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
 
-    // Swap
-    const temp = newImages[index];
-    newImages[index] = newImages[targetIndex];
-    newImages[targetIndex] = temp;
+    try {
+      const uploadedUrls: string[] = [];
+      for (let i = 0; i < sortedFiles.length; i++) {
+        const file = sortedFiles[i];
+        const url = await vehicle360Service.upload360Frame(vehicle.id, file);
+        uploadedUrls.push(url);
+        setUploadProgress(Math.round(((i + 1) / sortedFiles.length) * 100));
+      }
 
-    saveProject(framesCount, newImages, projectStatus);
-    setCurrentFrame(targetIndex);
-  };
-
-  const removeFrame = (index: number) => {
-    if (!project) return;
-    if (!confirm('Deseja remover este frame do projeto?')) return;
-
-    const newImages = frames.filter((_, i) => i !== index);
-    saveProject(framesCount, newImages, projectStatus);
-    if (currentFrame >= newImages.length && newImages.length > 0) {
-      setCurrentFrame(newImages.length - 1);
+      await saveProject(uploadedUrls.length, uploadedUrls, 'processing');
+      setCurrentFrame(0);
+    } catch (err: any) {
+      console.error('Upload failed:', err);
+      alert('Erro no upload dos frames: ' + (err.message || 'Tente novamente'));
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(null);
     }
   };
+
+  // Filter active POIs and Markers for current frame
+  const activeHotspots = useMemo(() => {
+    return hotspots.filter(h => h.frameNumber === currentFrame);
+  }, [hotspots, currentFrame]);
 
   const activeMarkers = useMemo(() => {
     if (!frames.length) return [];
@@ -622,11 +596,6 @@ function Editor360({
       .filter(item => item.posInfo.isVisible);
   }, [markers, currentFrame, frames.length]);
 
-  const activeInspectionItems = useMemo(() => {
-    if (!frames.length) return [];
-    return inspectionItems.filter(item => item.frameIndex === currentFrame && item.posX != null && item.posY != null);
-  }, [inspectionItems, currentFrame, frames.length]);
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
       {/* LEFT SIDE: 360 INTERACTIVE VIEWPORT */}
@@ -634,7 +603,11 @@ function Editor360({
         <div 
           ref={viewerRef}
           className={`relative aspect-video rounded-3xl border border-slate-200 bg-slate-950 overflow-hidden select-none ${
-            addMarkerMode || isPositioningInspectionItem ? 'cursor-crosshair' : frames.length > 0 ? 'cursor-grab active:cursor-grabbing' : 'cursor-default'
+            isCreatingPoi || isRepositioningPoi || addMarkerMode 
+              ? 'cursor-crosshair' 
+              : frames.length > 0 
+              ? 'cursor-grab active:cursor-grabbing' 
+              : 'cursor-default'
           }`}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
@@ -651,41 +624,46 @@ function Editor360({
                 referrerPolicy="no-referrer"
               />
 
-              {/* Inspection Items overlays */}
-              {activeInspectionItems.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setSelectedInspectionItem(item);
-                    setIsPositioningInspectionItem(false);
-                    setNewMarkerPos(null);
-                    setSelectedMarker(null);
-                    setActiveTab('inspecao');
-                  }}
-                  className={`absolute w-7 h-7 ${item.status === 'Avaria' ? 'bg-red-600 hover:bg-red-700' : item.status === 'OK' ? 'bg-emerald-600 hover:bg-emerald-700' : item.status === 'Atenção' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-slate-500 hover:bg-slate-600'} text-white font-bold rounded-full border-2 border-white shadow-lg flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 transition-transform hover:scale-110 active:scale-95 cursor-pointer z-30 ${
-                    selectedInspectionItem?.id === item.id ? 'ring-4 ring-white/50 scale-110' : ''
-                  }`}
-                  style={{ left: `${item.posX}%`, top: `${item.posY}%` }}
-                  title={`${item.groupName}: ${item.name}`}
+              {/* POI Hotspots (Pontos de Interesse) Pins */}
+              {activeHotspots.map(hotspot => (
+                <div
+                  key={hotspot.id}
+                  style={{ left: `${hotspot.posX}%`, top: `${hotspot.posY}%` }}
+                  className="absolute transform -translate-x-1/2 -translate-y-1/2 z-30 group"
                 >
-                  <MapPin className="w-4 h-4 fill-current" />
-                </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewHotspotId(hotspot.id);
+                    }}
+                    className={`w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white font-bold border-2 border-white shadow-lg flex items-center justify-center transition-transform hover:scale-125 active:scale-95 cursor-pointer ${
+                      editingPoi?.id === hotspot.id ? 'ring-4 ring-red-400 ring-offset-2 scale-125' : ''
+                    }`}
+                    title={hotspot.title}
+                  >
+                    <Camera className="w-4 h-4" />
+                  </button>
+
+                  {/* Hover Tooltip */}
+                  <div className="absolute left-1/2 -top-12 -translate-x-1/2 bg-slate-900/95 text-white text-[11px] font-bold px-3 py-1.5 rounded-xl border border-slate-700/90 shadow-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap flex items-center gap-1.5 z-40">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                    <span>{hotspot.title}</span>
+                    <span className="text-[9px] text-slate-400 font-normal">(Clique para abrir)</span>
+                  </div>
+                </div>
               ))}
 
-              {/* Marker Circles overlays */}
+              {/* Damage Markers Pins */}
               {activeMarkers.map(({ marker, posInfo }) => (
                 <button
                   key={marker.id}
                   onClick={(e) => {
                     e.stopPropagation();
                     setSelectedMarker(marker);
-                    setNewMarkerPos(null);
-                    setIsRepositioning(false);
-                    setActiveTab('hotspots');
+                    setActiveTab('avarias');
                   }}
-                  className={`absolute w-7 h-7 bg-red-600 hover:bg-red-700 text-white font-bold rounded-full border-2 border-white shadow-lg flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 transition-transform hover:scale-110 active:scale-95 cursor-pointer z-30 ${
-                    selectedMarker?.id === marker.id ? 'ring-4 ring-red-300 ring-offset-1 scale-110' : ''
+                  className={`absolute w-7 h-7 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-full border-2 border-white shadow-lg flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 transition-transform hover:scale-110 active:scale-95 cursor-pointer z-30 ${
+                    selectedMarker?.id === marker.id ? 'ring-4 ring-amber-300 ring-offset-1 scale-110' : ''
                   }`}
                   style={{ left: `${posInfo.posX}%`, top: `${posInfo.posY}%` }}
                   title={`${marker.category}: ${marker.title}`}
@@ -694,25 +672,40 @@ function Editor360({
                 </button>
               ))}
 
-              {/* Temporary Placement Marker overlay */}
-              {newMarkerPos && (
+              {/* Temporary Placement Marker overlay for new POI */}
+              {newPoiPos && (
                 <div 
-                  className="absolute w-7 h-7 bg-blue-500 text-white font-bold rounded-full border-2 border-white shadow-lg flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 z-30 animate-pulse"
-                  style={{ left: `${newMarkerPos.x}%`, top: `${newMarkerPos.y}%` }}
+                  className="absolute w-8 h-8 bg-red-600 text-white font-bold rounded-full border-2 border-white shadow-xl flex items-center justify-center transform -translate-x-1/2 -translate-y-1/2 z-40 animate-bounce"
+                  style={{ left: `${newPoiPos.x}%`, top: `${newPoiPos.y}%` }}
                 >
-                  <Plus className="w-4 h-4" />
+                  <Camera className="w-4 h-4" />
+                </div>
+              )}
+
+              {/* Placement instruction banner */}
+              {(isCreatingPoi || isRepositioningPoi) && (
+                <div className="absolute top-4 left-4 right-4 bg-slate-900/90 backdrop-blur-md border border-red-500/40 rounded-2xl p-3 text-white text-xs font-bold flex items-center justify-between shadow-2xl z-30">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping" />
+                    <span>
+                      {isRepositioningPoi 
+                        ? `Clique no veículo para definir a nova posição do ponto "${editingPoi?.title}"` 
+                        : 'Gire até o ângulo desejado e clique no veículo para marcar a foto técnica.'}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-slate-400">Frame {currentFrame + 1}</span>
                 </div>
               )}
 
               {/* Bottom indicators */}
               <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between pointer-events-none">
-                <div className="bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-bold text-slate-300 flex items-center gap-1.5 shadow">
+                <div className="bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-bold text-slate-300 flex items-center gap-1.5 shadow-xs">
                   <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
                   <span>Frame {currentFrame + 1} de {frames.length}</span>
                 </div>
 
-                <div className="bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-bold text-slate-300 shadow">
-                  Arrastar para girar
+                <div className="bg-slate-900/80 backdrop-blur-md px-3 py-1.5 rounded-xl border border-slate-800 text-xs font-bold text-slate-300 shadow-xs">
+                  {isCreatingPoi || isRepositioningPoi ? 'Modo Marcação' : 'Arrastar para girar'}
                 </div>
               </div>
             </div>
@@ -721,7 +714,7 @@ function Editor360({
               <RotateCcw className="w-12 h-12 text-slate-700 mb-3 animate-spin" style={{ animationDuration: '6s' }} />
               <p className="font-extrabold text-white text-lg">Sem frames cadastrados</p>
               <p className="text-xs text-slate-400 mt-1 max-w-sm">
-                Selecione ou arraste imagens do carro na aba "Imagens" do lado direito para inicializar o visualizador 360°.
+                Envie as imagens na aba "Imagens" para montar o giro 360°.
               </p>
             </div>
           )}
@@ -730,7 +723,7 @@ function Editor360({
             <div className="absolute inset-0 bg-slate-950/40 backdrop-blur-xs flex items-center justify-center z-40">
               <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl shadow-xl flex items-center gap-3">
                 <Loader2 className="w-5 h-5 text-red-500 animate-spin" />
-                <span className="text-xs font-bold text-white">Processando alterações...</span>
+                <span className="text-xs font-bold text-white">Carregando dados 360°...</span>
               </div>
             </div>
           )}
@@ -738,7 +731,7 @@ function Editor360({
 
         {/* Viewport Control Buttons */}
         {frames.length > 0 && (
-          <div className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-2xl p-3.5 shadow-sm">
+          <div className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-2xl p-3.5 shadow-xs">
             <div className="flex gap-2">
               <button
                 onClick={() => setCurrentFrame(prev => (prev - 1 + frames.length) % frames.length)}
@@ -763,22 +756,39 @@ function Editor360({
               </button>
             </div>
 
-            <div className="text-xs font-bold text-slate-500">
-              {markers.length} marcadores totais
+            <div className="flex items-center gap-2 text-xs font-bold text-slate-600">
+              <span className="w-2 h-2 rounded-full bg-red-500" />
+              <span>{hotspots.length} Pontos de Interesse</span>
             </div>
           </div>
         )}
       </div>
 
       {/* RIGHT SIDE: MANAGEMENT TABS PANEL */}
-      <div className="lg:col-span-5 bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm flex flex-col min-h-[500px]">
+      <div className="lg:col-span-5 bg-white border border-slate-200 rounded-3xl overflow-hidden shadow-sm flex flex-col min-h-[520px]">
         {/* Tab Headers */}
         <div className="grid grid-cols-4 border-b border-slate-100 bg-slate-50">
           <button
             onClick={() => {
+              setActiveTab('pois');
+              setSelectedMarker(null);
+            }}
+            className={`py-3.5 text-center text-[11px] font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1 border-b-2 ${
+              activeTab === 'pois'
+                ? 'text-red-600 border-red-600 bg-white'
+                : 'text-slate-400 border-transparent hover:bg-slate-100/50 hover:text-slate-700'
+            }`}
+          >
+            <Camera className="w-4 h-4" />
+            <span>POIs ({hotspots.length})</span>
+          </button>
+
+          <button
+            onClick={() => {
               setActiveTab('imagens');
               setSelectedMarker(null);
-              setNewMarkerPos(null);
+              setIsCreatingPoi(false);
+              setEditingPoi(null);
             }}
             className={`py-3.5 text-center text-[11px] font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1 border-b-2 ${
               activeTab === 'imagens'
@@ -787,45 +797,31 @@ function Editor360({
             }`}
           >
             <ImageIcon className="w-4 h-4" />
-            <span>Imagens ({frames.length})</span>
+            <span>Frames ({frames.length})</span>
           </button>
 
           <button
             onClick={() => {
-              setActiveTab('hotspots');
-              setNewMarkerPos(null);
+              setActiveTab('avarias');
+              setIsCreatingPoi(false);
+              setEditingPoi(null);
             }}
             className={`py-3.5 text-center text-[11px] font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1 border-b-2 ${
-              activeTab === 'hotspots'
+              activeTab === 'avarias'
                 ? 'text-red-600 border-red-600 bg-white'
                 : 'text-slate-400 border-transparent hover:bg-slate-100/50 hover:text-slate-700'
             }`}
           >
             <AlertCircle className="w-4 h-4" />
-            <span>Hotspots ({markers.length})</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setActiveTab('inspecao');
-              setSelectedMarker(null);
-              setNewMarkerPos(null);
-            }}
-            className={`py-3.5 text-center text-[11px] font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1 border-b-2 ${
-              activeTab === 'inspecao'
-                ? 'text-red-600 border-red-600 bg-white'
-                : 'text-slate-400 border-transparent hover:bg-slate-100/50 hover:text-slate-700'
-            }`}
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            <span>Inspeção</span>
+            <span>Avarias ({markers.length})</span>
           </button>
 
           <button
             onClick={() => {
               setActiveTab('configuracoes');
               setSelectedMarker(null);
-              setNewMarkerPos(null);
+              setIsCreatingPoi(false);
+              setEditingPoi(null);
             }}
             className={`py-3.5 text-center text-[11px] font-bold uppercase transition-colors cursor-pointer flex flex-col items-center gap-1 border-b-2 ${
               activeTab === 'configuracoes'
@@ -841,458 +837,636 @@ function Editor360({
         {/* Tab Viewport */}
         <div className="p-6 flex-1 overflow-y-auto">
           
-          {/* TAB: IMAGES */}
+          {/* TAB: PONTOS DE INTERESSE (POIs) */}
+          {activeTab === 'pois' && (
+            <div className="space-y-6">
+              
+              {/* If creating a new POI */}
+              {isCreatingPoi ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-5 animate-fadeIn">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 bg-red-100 text-red-600 rounded-lg">
+                        <Plus className="w-4 h-4" />
+                      </span>
+                      <h4 className="font-extrabold text-sm text-slate-900">
+                        Novo Ponto de Interesse
+                      </h4>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setIsCreatingPoi(false);
+                        setNewPoiPos(null);
+                        setPoiTitle('');
+                      }}
+                      className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+
+                  {/* STEP 1: Select Photo */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                      <span>1. Selecione a Foto Técnica do Veículo:</span>
+                      <span className="text-[10px] text-slate-400 font-normal">
+                        ({availableImages.length} fotos disponíveis)
+                      </span>
+                    </label>
+                    
+                    {availableImages.length > 0 ? (
+                      <div className="grid grid-cols-3 gap-2.5 max-h-48 overflow-y-auto p-1 bg-white rounded-xl border border-slate-200">
+                        {availableImages.map((img) => (
+                          <div
+                            key={img.id}
+                            onClick={() => setSelectedPoiImage(img)}
+                            className={`group relative aspect-square rounded-lg overflow-hidden border-2 cursor-pointer transition-all ${
+                              selectedPoiImage?.id === img.id
+                                ? 'border-red-600 ring-2 ring-red-500/30'
+                                : 'border-slate-100 hover:border-slate-300'
+                            }`}
+                          >
+                            <img
+                              src={img.url}
+                              alt="Foto técnica"
+                              className="w-full h-full object-cover"
+                              referrerPolicy="no-referrer"
+                            />
+                            {selectedPoiImage?.id === img.id && (
+                              <div className="absolute inset-0 bg-red-600/30 flex items-center justify-center">
+                                <span className="p-1 bg-red-600 text-white rounded-full">
+                                  <Check className="w-3.5 h-3.5" />
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="bg-white border border-slate-200 rounded-xl p-4 text-center text-xs text-slate-500">
+                        Nenhuma foto disponível no cadastro do veículo.
+                      </div>
+                    )}
+                  </div>
+
+                  {/* STEP 2: Title & Suggestions */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      2. Título do Ponto de Interesse:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Ex: Motor, Painel, Porta-malas..."
+                      value={poiTitle}
+                      onChange={(e) => setPoiTitle(e.target.value)}
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 text-xs font-bold focus:outline-none focus:border-red-600"
+                    />
+
+                    {/* Quick Suggestions Pills */}
+                    <div className="flex flex-wrap gap-1.5 pt-1">
+                      {SUGGESTED_POI_TITLES.slice(0, 10).map((title) => (
+                        <button
+                          key={title}
+                          type="button"
+                          onClick={() => setPoiTitle(title)}
+                          className={`text-[10px] font-bold px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                            poiTitle === title
+                              ? 'bg-red-600 text-white border-red-600'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {title}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* STEP 3: Position Pin Instruction */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700 block">
+                      3. Posicione sobre o Veículo no 360°:
+                    </label>
+                    <div className="bg-amber-50/80 border border-amber-200/70 rounded-xl p-3 text-amber-900 text-xs flex items-start gap-2.5">
+                      <MapPin className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <span className="font-bold block">
+                          {newPoiPos ? 'Posição definida no Frame ' + (currentFrame + 1) : 'Clique no visualizador ao lado'}
+                        </span>
+                        <span className="text-[11px] text-amber-800">
+                          {newPoiPos 
+                            ? `X: ${newPoiPos.x}%, Y: ${newPoiPos.y}%` 
+                            : 'Gire o veículo até o ângulo correspondente à foto e clique sobre o ponto desejado.'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCreatingPoi(false);
+                        setNewPoiPos(null);
+                        setPoiTitle('');
+                      }}
+                      className="px-4 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveNewPoi}
+                      disabled={savingPoi || !selectedPoiImage || !poiTitle.trim() || !newPoiPos}
+                      className="px-5 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                    >
+                      {savingPoi ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                      <span>Salvar Ponto de Interesse</span>
+                    </button>
+                  </div>
+                </div>
+              ) : editingPoi ? (
+                /* EDIT POI CARD */
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-5 space-y-5 animate-fadeIn">
+                  <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 bg-blue-100 text-blue-600 rounded-lg">
+                        <Edit3 className="w-4 h-4" />
+                      </span>
+                      <h4 className="font-extrabold text-sm text-slate-900">
+                        Editar Ponto de Interesse
+                      </h4>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setEditingPoi(null);
+                        setIsRepositioningPoi(false);
+                      }}
+                      className="text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+
+                  {/* Selected Photo display */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">Foto Vinculada:</label>
+                    <div className="relative aspect-video rounded-xl overflow-hidden border border-slate-200 bg-black">
+                      <img
+                        src={editingPoi.imageUrl}
+                        alt={editingPoi.title}
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Title input */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-700 block">Título:</label>
+                    <input
+                      type="text"
+                      value={editingPoi.title}
+                      onChange={(e) => setEditingPoi({ ...editingPoi, title: e.target.value })}
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-slate-800 text-xs font-bold focus:outline-none focus:border-red-600"
+                    />
+                  </div>
+
+                  {/* Reposition action */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-700">Posição no 360°:</span>
+                      <span className="text-[11px] font-bold text-slate-500">
+                        Frame {editingPoi.frameNumber + 1} (X: {editingPoi.posX}%, Y: {editingPoi.posY}%)
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCurrentFrame(editingPoi.frameNumber);
+                        setIsRepositioningPoi(true);
+                      }}
+                      className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 border transition-all cursor-pointer ${
+                        isRepositioningPoi
+                          ? 'bg-red-600 text-white border-red-600 animate-pulse'
+                          : 'bg-white hover:bg-slate-100 text-slate-700 border-slate-200'
+                      }`}
+                    >
+                      <Move className="w-4 h-4" />
+                      <span>{isRepositioningPoi ? 'Clique no 360° para definir nova posição' : 'Mudar Posição no 360°'}</span>
+                    </button>
+                  </div>
+
+                  {/* Save buttons */}
+                  <div className="pt-2 flex items-center justify-between border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => handleDeletePoi(editingPoi.id)}
+                      className="text-xs font-bold text-red-600 hover:text-red-700 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Excluir Ponto</span>
+                    </button>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingPoi(null);
+                          setIsRepositioningPoi(false);
+                        }}
+                        className="px-3 py-2 text-xs font-bold text-slate-500 hover:text-slate-700 cursor-pointer"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveEditPoi}
+                        disabled={savingPoi}
+                        className="px-4 py-2 bg-slate-900 hover:bg-black text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer flex items-center gap-1.5"
+                      >
+                        {savingPoi ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        <span>Salvar</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                /* MAIN POI LIST VIEW */
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-slate-900 text-sm">
+                        Pontos de Interesse Cadastrados
+                      </h4>
+                      <p className="text-[11px] text-slate-400">
+                        Fotos técnicas vinculadas ao visualizador 360°
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setIsCreatingPoi(true);
+                        setNewPoiPos(null);
+                        setPoiTitle('');
+                        if (availableImages.length > 0) {
+                          setSelectedPoiImage(availableImages[0]);
+                        }
+                      }}
+                      className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Novo Ponto</span>
+                    </button>
+                  </div>
+
+                  {hotspots.length > 0 ? (
+                    <div className="divide-y divide-slate-100 bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
+                      {hotspots.map((hotspot) => (
+                        <div 
+                          key={hotspot.id}
+                          className="p-3.5 flex items-center justify-between gap-3 hover:bg-slate-50/80 transition-colors"
+                        >
+                          <div 
+                            className="flex items-center gap-3 min-w-0 cursor-pointer flex-1"
+                            onClick={() => {
+                              setCurrentFrame(hotspot.frameNumber);
+                              setPreviewHotspotId(hotspot.id);
+                            }}
+                          >
+                            {/* Miniature photo */}
+                            <div className="relative w-12 h-10 rounded-lg overflow-hidden bg-slate-950 shrink-0 border border-slate-200">
+                              <img
+                                src={hotspot.imageUrl}
+                                alt={hotspot.title}
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            </div>
+
+                            <div className="min-w-0">
+                              <span className="font-bold text-xs text-slate-900 block truncate hover:text-red-600 transition-colors">
+                                {hotspot.title}
+                              </span>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                <span className="text-[10px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
+                                  Frame {hotspot.frameNumber + 1}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Item actions */}
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() => {
+                                setCurrentFrame(hotspot.frameNumber);
+                              }}
+                              className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                              title="Girar para este Frame"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setEditingPoi(hotspot);
+                                setCurrentFrame(hotspot.frameNumber);
+                              }}
+                              className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                              title="Editar Ponto de Interesse"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+
+                            <button
+                              onClick={() => handleDeletePoi(hotspot.id)}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                              title="Excluir Ponto"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-8 text-center space-y-3">
+                      <Camera className="w-10 h-10 text-slate-300 mx-auto" />
+                      <div>
+                        <h5 className="font-bold text-sm text-slate-800">
+                          Nenhum Ponto de Interesse Criado
+                        </h5>
+                        <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+                          Vincule fotos de detalhes técnicos (como motor, rodas, painel e porta-malas) aos ângulos 360° do carro.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          setIsCreatingPoi(true);
+                          setNewPoiPos(null);
+                          setPoiTitle('');
+                          if (availableImages.length > 0) {
+                            setSelectedPoiImage(availableImages[0]);
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer shadow-xs"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Criar Primeiro Ponto</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: FRAMES (360 IMAGES) */}
           {activeTab === 'imagens' && (
             <div className="space-y-6">
               {/* Upload Zone */}
               <div 
-                onDragOver={handleDragOver}
-                onDrop={handleDrop}
-                className="border-2 border-dashed border-slate-200 hover:border-red-600 rounded-2xl p-6 text-center transition-colors bg-slate-50/50 relative cursor-pointer"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  const files = Array.from(e.dataTransfer.files || []) as File[];
+                  if (files.length > 0) await processUploads(files);
+                }}
+                className="border-2 border-dashed border-slate-200 hover:border-red-500 rounded-3xl p-6 text-center transition-colors bg-slate-50/50 flex flex-col items-center justify-center gap-3"
               >
-                <input 
-                  type="file" 
-                  id="360-files-uploader"
-                  multiple 
-                  accept="image/*"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-                <label htmlFor="360-files-uploader" className="cursor-pointer block space-y-2">
-                  <div className="w-10 h-10 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto shadow-sm">
-                    <Upload className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-800">Selecione ou Arraste os Frames</p>
-                    <p className="text-[11px] text-slate-400 mt-1">Carregue imagens ordenadas de preferência (ex: 001, 002...)</p>
-                  </div>
+                <div className="p-3 bg-red-50 text-red-600 rounded-2xl">
+                  <Upload className="w-6 h-6" />
+                </div>
+                <div>
+                  <h4 className="font-extrabold text-sm text-slate-800">
+                    Enviar Frames da Foto 360°
+                  </h4>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Arraste ou selecione a sequência de fotos sequenciais (24 a 96 fotos)
+                  </p>
+                </div>
+
+                <label className="px-4 py-2 bg-slate-900 hover:bg-red-600 text-white rounded-xl font-bold text-xs transition-colors cursor-pointer shadow-xs">
+                  <span>Selecionar Fotos</span>
+                  <input
+                    type="file"
+                    multiple
+                    accept="image/*"
+                    onChange={async (e) => {
+                      const files = Array.from(e.target.files || []) as File[];
+                      if (files.length > 0) await processUploads(files);
+                    }}
+                    className="hidden"
+                  />
                 </label>
 
-                {isUploading && (
-                  <div className="absolute inset-0 bg-white/95 backdrop-blur-xs flex flex-col items-center justify-center p-4 rounded-2xl space-y-3">
-                    <Loader2 className="w-6 h-6 text-red-600 animate-spin" />
-                    <div className="w-full max-w-[200px]">
-                      <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1">
-                        <span>Enviando para o Storage</span>
-                        <span>{uploadProgress}%</span>
-                      </div>
-                      <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-                        <div className="bg-red-600 h-full" style={{ width: `${uploadProgress}%` }} />
-                      </div>
+                {isUploading && uploadProgress !== null && (
+                  <div className="w-full max-w-xs space-y-1.5 pt-2">
+                    <div className="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+                      <div 
+                        className="bg-red-600 h-full transition-all duration-300"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
                     </div>
+                    <span className="text-[10px] font-bold text-slate-500 block">
+                      Enviando frames... {uploadProgress}%
+                    </span>
                   </div>
                 )}
               </div>
 
-              {/* Status information */}
-              <div className="flex items-center justify-between text-xs font-bold text-slate-500 bg-slate-50 border border-slate-200/60 p-3 rounded-xl">
-                <span>Total de Frames: {frames.length} / {framesCount}</span>
-                <span className="text-red-600">{frames.length > 0 ? `${frames.length} imagens` : 'Sem imagens'}</span>
-              </div>
-
-              {/* Reordering Preview Grid */}
+              {/* Frames Miniature Grid */}
               {frames.length > 0 && (
                 <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-[10px] uppercase font-bold text-slate-400">Listagem de Frames</span>
-                    <button 
-                      onClick={() => {
-                        if (confirm('Deseja limpar todos os frames deste projeto?')) {
-                          saveProject(framesCount, [], 'draft');
-                        }
-                      }}
-                      className="text-[10px] text-red-600 hover:text-red-700 font-bold flex items-center gap-1 cursor-pointer bg-red-50 px-2 py-1 rounded"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                      Limpar Tudo
-                    </button>
-                  </div>
-
-                  {/* Virtualized/Scrollable layout for frames */}
-                  <div className="grid grid-cols-4 gap-2 max-h-[250px] overflow-y-auto p-1.5 border border-slate-100 rounded-xl">
-                    {frames.map((img, idx) => {
-                      const isActive = idx === currentFrame;
-                      return (
-                        <div 
-                          key={idx}
-                          onClick={() => setCurrentFrame(idx)}
-                          className={`relative aspect-square rounded-lg border overflow-hidden cursor-pointer transition-all ${
-                            isActive ? 'ring-2 ring-red-600 border-transparent shadow' : 'border-slate-200 hover:border-slate-400'
-                          }`}
-                        >
-                          <img src={img} alt={`F-${idx}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                          <div className="absolute top-1 left-1 bg-slate-900/80 backdrop-blur-xs text-[9px] font-bold text-white px-1.5 rounded">
-                            {idx + 1}
-                          </div>
-
-                          {/* Reordering Controls */}
-                          <div className="absolute bottom-1 right-1 flex gap-0.5 opacity-0 hover:opacity-100 focus-within:opacity-100 transition-opacity bg-slate-900/90 rounded p-0.5">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); moveFrame(idx, 'left'); }}
-                              disabled={idx === 0}
-                              className="text-white hover:text-red-500 disabled:opacity-30"
-                              title="Mover para esquerda"
-                            >
-                              <ChevronLeft className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); moveFrame(idx, 'right'); }}
-                              disabled={idx === frames.length - 1}
-                              className="text-white hover:text-red-500 disabled:opacity-30"
-                              title="Mover para direita"
-                            >
-                              <ChevronRight className="w-3 h-3" />
-                            </button>
-                            <button
-                              onClick={(e) => { e.stopPropagation(); removeFrame(idx); }}
-                              className="text-red-400 hover:text-red-600 ml-0.5"
-                              title="Remover frame"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* TAB: HOTSPOTS */}
-          {activeTab === 'hotspots' && (
-            <div className="space-y-6">
-              {/* Header & Add Button */}
-              <div className="flex justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                <div>
-                  <h4 className="font-extrabold text-sm text-slate-900">Hotspots de Danos 360°</h4>
-                  <p className="text-xs text-slate-500">Mapeie avarias com posição sincronizada no giro 360°</p>
-                </div>
-                <button
-                  disabled={frames.length === 0}
-                  onClick={() => {
-                    setAddMarkerMode(true);
-                    setSelectedMarker(null);
-                    setNewMarkerPos(null);
-                  }}
-                  className="text-xs bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white font-bold px-3 py-2 rounded-xl cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Novo Hotspot</span>
-                </button>
-              </div>
-
-              {/* Add Marker Trigger Banner */}
-              {addMarkerMode && !newMarkerPos && !selectedMarker && (
-                <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3 animate-fadeIn">
-                  <p className="text-xs text-red-700 font-bold text-center">
-                    Gire o veículo até o ângulo desejado e clique diretamente no ponto da avaria.
-                  </p>
-                  <button 
-                    onClick={() => setAddMarkerMode(false)} 
-                    className="w-full py-2 bg-white hover:bg-slate-100 text-slate-700 text-xs font-bold rounded-xl cursor-pointer border border-slate-200"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              )}
-
-              {/* Form: Place New Marker */}
-              {newMarkerPos && (
-                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-4 animate-fadeIn">
-                  <div className="flex justify-between items-center border-b border-slate-200 pb-2">
-                    <span className="text-xs font-bold text-slate-700">Novo Hotspot (Frame {currentFrame + 1})</span>
-                    <button 
-                      onClick={() => setNewMarkerPos(null)}
-                      className="p-1 hover:bg-slate-200 text-slate-400 hover:text-slate-700 rounded-full cursor-pointer"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Título</label>
-                      <input 
-                        type="text" 
-                        placeholder="Ex: Riscado na porta esquerda"
-                        value={markerTitle}
-                        onChange={(e) => setMarkerTitle(e.target.value)}
-                        className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-red-600 bg-white font-medium"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Categoria</label>
-                      <select
-                        value={markerCategory}
-                        onChange={(e) => setMarkerCategory(e.target.value as any)}
-                        className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-red-600 bg-white font-medium"
-                      >
-                        {['Arranhão', 'Amassado', 'Parachoque', 'Farol', 'Lanterna', 'Pneu', 'Roda', 'Retrovisor', 'Capô', 'Teto', 'Vidro', 'Outro'].map(cat => (
-                          <option key={cat} value={cat}>{cat}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Descrição Detalhada</label>
-                      <textarea
-                        rows={2}
-                        placeholder="Escreva detalhes do dano..."
-                        value={markerDescription}
-                        onChange={(e) => setMarkerDescription(e.target.value)}
-                        className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:border-red-600 bg-white font-medium resize-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Fotos do Dano (Evidências)</label>
-                      <div className="flex flex-wrap gap-2 items-center">
-                        <input 
-                          type="file" 
-                          id="damage-images-uploader"
-                          multiple 
-                          accept="image/*"
-                          onChange={handleDamageImageUpload}
-                          className="hidden"
-                        />
-                        <label 
-                          htmlFor="damage-images-uploader" 
-                          className="w-12 h-12 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg flex items-center justify-center cursor-pointer text-slate-400 hover:text-slate-600 transition-colors"
-                        >
-                          {damageUploading ? <Loader2 className="w-4 h-4 animate-spin text-red-600" /> : <Plus className="w-4 h-4" />}
-                        </label>
-                        {damageImages.map((url, idx) => (
-                          <div key={idx} className="relative w-12 h-12 rounded-lg border border-slate-200 overflow-hidden">
-                            <img src={url} alt={`D-${idx}`} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                            <button
-                              type="button"
-                              onClick={() => handleRemoveDamageImage(idx)}
-                              className="absolute top-0 right-0 bg-red-600 text-white rounded-bl p-0.5 hover:bg-red-700 cursor-pointer"
-                            >
-                              <X className="w-2.5 h-2.5" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex gap-2 pt-2 border-t border-slate-200">
-                      <button
-                        onClick={handleSaveNewMarker}
-                        disabled={!markerTitle}
-                        className="flex-1 py-2 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-300 text-white text-xs font-bold rounded-lg cursor-pointer"
-                      >
-                        Salvar Hotspot
-                      </button>
-                      <button
-                        onClick={() => setNewMarkerPos(null)}
-                        className="px-4 py-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 text-xs font-bold rounded-lg cursor-pointer"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* View/Edit existing marker details */}
-              {selectedMarker && (
-                <div className="bg-red-50/50 border border-red-200 rounded-2xl p-4 space-y-4 animate-fadeIn">
-                  <div className="flex justify-between items-center border-b border-red-200 pb-2">
-                    <span className="text-xs font-bold text-red-800 flex items-center gap-1.5">
-                      <AlertCircle className="w-4 h-4 fill-red-600 text-white" />
-                      <span>{selectedMarker.category}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-700">
+                      Sequência Atual ({frames.length} frames)
                     </span>
-                    <button 
-                      onClick={() => {
-                        setSelectedMarker(null);
-                        setIsRepositioning(false);
-                      }}
-                      className="p-1 hover:bg-red-100 text-red-400 hover:text-red-700 rounded-full cursor-pointer"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                    <span className="text-[10px] text-slate-400">
+                      Clique para visualizar o quadro
+                    </span>
                   </div>
-                  <div className="space-y-3">
-                    <div>
-                      <h4 className="font-extrabold text-sm text-slate-900">{selectedMarker.title}</h4>
-                      <p className="text-xs text-slate-500 mt-1">{selectedMarker.description || 'Sem descrição cadastrada.'}</p>
-                    </div>
 
-                    {selectedMarker.images && selectedMarker.images.length > 0 && (
-                      <div>
-                        <span className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Fotos da Avaria</span>
-                        <div className="flex gap-2 overflow-x-auto pb-1">
-                          {selectedMarker.images.map((img, i) => (
-                            <img key={i} src={img} alt="Dano" className="w-14 h-14 object-cover rounded-lg border border-slate-200" referrerPolicy="no-referrer" />
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="flex gap-2 pt-4 border-t border-red-200/50">
-                      <button
-                        onClick={() => {
-                          if (confirm('Deseja excluir este hotspot?')) {
-                            deleteMarker(selectedMarker.id);
-                            setSelectedMarker(null);
-                          }
-                        }}
-                        className="w-full py-2 bg-white border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold rounded-lg cursor-pointer flex items-center justify-center gap-1.5"
+                  <div className="grid grid-cols-4 sm:grid-cols-6 gap-2 max-h-64 overflow-y-auto p-1">
+                    {frames.map((frameUrl, idx) => (
+                      <div
+                        key={idx}
+                        onClick={() => setCurrentFrame(idx)}
+                        className={`group relative aspect-square rounded-xl overflow-hidden border-2 cursor-pointer transition-all ${
+                          currentFrame === idx
+                            ? 'border-red-600 scale-105 shadow-md shadow-red-500/20 ring-2 ring-red-500/30'
+                            : 'border-slate-100 hover:border-slate-300 opacity-70 hover:opacity-100'
+                        }`}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        Excluir
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* List of Markers */}
-              {!selectedMarker && !newMarkerPos && !addMarkerMode && (
-                <div className="space-y-3">
-                  <div className="flex justify-between items-center">
-                    <h4 className="text-xs uppercase font-extrabold text-slate-700 tracking-wider">
-                      Hotspots Cadastrados ({markers.length})
-                    </h4>
-                  </div>
-
-                  <div className="space-y-2 max-h-[340px] overflow-y-auto pr-1">
-                    {markers.map(m => (
-                      <div 
-                        key={m.id}
-                        onClick={() => setSelectedMarker(m)}
-                        className="flex items-center justify-between p-3 rounded-xl border border-slate-200 hover:bg-slate-50 bg-white cursor-pointer transition-colors"
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="w-2.5 h-2.5 bg-red-600 rounded-full shrink-0" />
-                          <div>
-                            <p className="font-bold text-xs text-slate-900">{m.title}</p>
-                            <p className="text-[10px] text-slate-400 font-medium">
-                              Categoria: <span className="font-bold text-slate-600">{m.category}</span>
-                            </p>
-                          </div>
-                        </div>
-                        <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                        <img
+                          src={frameUrl}
+                          alt={`Frame ${idx + 1}`}
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                        <span className="absolute bottom-1 right-1 bg-black/70 text-white text-[8px] font-bold px-1 rounded">
+                          {idx + 1}
+                        </span>
                       </div>
                     ))}
-                    {markers.length === 0 && (
-                      <div className="text-center py-8 text-xs text-slate-400 italic bg-slate-50 rounded-2xl border border-slate-100">
-                        Nenhum hotspot cadastrado. Clique em "+ Novo Hotspot" acima.
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          {/* TAB: TECHNICAL INSPECTION */}
-          {activeTab === 'inspecao' && (
-            <div>
-              <TechnicalInspectionModule projectId={vehicle.id} />
-            </div>
-          )}
-
-          {/* TAB: CONFIGURATIONS */}
-          {activeTab === 'configuracoes' && (
-            <div className="space-y-6">
-              <div className="space-y-4">
-                <h4 className="text-xs uppercase font-extrabold text-slate-800 tracking-wider border-b border-slate-100 pb-2">
-                  Especificações do Projeto 360°
-                </h4>
-
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Status de Publicação</label>
-                    <select
-                      value={projectStatus}
-                      onChange={(e) => {
-                        const status = e.target.value as Vehicle360['status'];
-                        setProjectStatus(status);
-                        if (project) {
-                          saveProject(framesCount, frames, status);
-                        }
-                      }}
-                      className="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-red-600 bg-white text-slate-700"
-                    >
-                      {[
-                        { value: 'draft', label: 'Não iniciado' },
-                        { value: 'processing', label: 'Em andamento' },
-                        { value: 'completed', label: 'Concluído' }
-                      ].map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-500 mb-1">Quantidade Estimada de Frames</label>
-                    <select
-                      value={framesCount}
-                      onChange={(e) => {
-                        const cnt = Number(e.target.value);
-                        setFramesCount(cnt);
-                        if (project) {
-                          saveProject(cnt, frames, projectStatus);
-                        }
-                      }}
-                      className="w-full text-xs font-bold border border-slate-200 rounded-xl px-3 py-2.5 focus:outline-none focus:border-red-600 bg-white text-slate-700"
-                    >
-                      {[24, 36, 48, 72, 96].map(num => (
-                        <option key={num} value={num}>{num} frames (Giro completo)</option>
-                      ))}
-                    </select>
-                    <p className="text-[10px] text-slate-400 mt-1">Garante que a rotação no showroom seja otimizada e o frame-rate ideal.</p>
-                  </div>
+          {/* TAB: AVARIAS (DAMAGE MARKERS) */}
+          {activeTab === 'avarias' && (
+            <div className="space-y-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-extrabold text-sm text-slate-900">
+                    Avarias e Danos
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    Mapeamento independente de arranhões e reparos
+                  </p>
                 </div>
+
+                {!addMarkerMode && !newMarkerPos && (
+                  <button
+                    onClick={() => {
+                      setAddMarkerMode(true);
+                      setNewMarkerPos(null);
+                      setSelectedMarker(null);
+                    }}
+                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-xl font-bold text-xs transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Nova Avaria</span>
+                  </button>
+                )}
               </div>
 
-              {/* Informational Panel */}
-              <div className="bg-slate-50 rounded-2xl border border-slate-150 p-4 space-y-2.5">
-                <span className="text-[10px] uppercase font-extrabold text-slate-500 block">Metadados do Inspetor</span>
-                <div className="grid grid-cols-2 gap-3 text-[11px] font-bold text-slate-600">
-                  <div className="bg-white p-2 rounded-lg border border-slate-100">
-                    <span className="text-slate-400 block text-[9px] font-medium uppercase">Carregado:</span>
-                    <span>{frames.length} imagens</span>
-                  </div>
-                  <div className="bg-white p-2 rounded-lg border border-slate-100">
-                    <span className="text-slate-400 block text-[9px] font-medium uppercase">Tamanho Estimado:</span>
-                    <span>{(frames.length * 0.15).toFixed(2)} MB</span>
-                  </div>
-                  <div className="bg-white p-2 rounded-lg border border-slate-100 col-span-2">
-                    <span className="text-slate-400 block text-[9px] font-medium uppercase">Atualizado em:</span>
-                    <span>{project ? new Date(project.updatedAt).toLocaleString('pt-BR') : 'N/A'}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Destructive Deletion Panel */}
-              {project && (
-                <div className="pt-6 border-t border-slate-100">
-                  <div className="bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3">
-                    <div>
-                      <h4 className="font-extrabold text-xs text-red-900 uppercase">Zona de Exclusão</h4>
-                      <p className="text-[10px] text-red-600 mt-1 font-medium leading-relaxed">
-                        Ao excluir este projeto 360°, todos os dados do banco e as imagens enviadas ao Supabase Storage serão removidos permanentemente.
-                      </p>
-                    </div>
+              {/* Add damage marker form */}
+              {newMarkerPos ? (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 animate-fadeIn">
+                  <h5 className="font-bold text-xs text-slate-900">Nova Avaria (Frame {currentFrame + 1})</h5>
+                  <input
+                    type="text"
+                    placeholder="Título (ex: Arranhão lateral)"
+                    value={markerTitle}
+                    onChange={(e) => setMarkerTitle(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold"
+                  />
+                  <textarea
+                    placeholder="Descrição da avaria..."
+                    value={markerDescription}
+                    onChange={(e) => setMarkerDescription(e.target.value)}
+                    rows={2}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs"
+                  />
+                  <div className="flex justify-end gap-2 pt-2">
                     <button
-                      onClick={handleDeleteFull360}
-                      className="w-full py-2 px-4 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold text-xs uppercase transition-colors cursor-pointer"
+                      onClick={() => setNewMarkerPos(null)}
+                      className="px-3 py-1.5 text-xs font-bold text-slate-500"
                     >
-                      Excluir Projeto 360°
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={handleSaveNewMarker}
+                      disabled={!markerTitle}
+                      className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs rounded-xl shadow-xs"
+                    >
+                      Salvar Avaria
                     </button>
                   </div>
                 </div>
+              ) : addMarkerMode ? (
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 space-y-2">
+                  <span className="font-bold block">Clique sobre o veículo no visualizador ao lado para marcar o dano.</span>
+                  <button
+                    onClick={() => setAddMarkerMode(false)}
+                    className="text-amber-700 font-bold underline"
+                  >
+                    Cancelar marcação
+                  </button>
+                </div>
+              ) : markers.length > 0 ? (
+                <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-2xl overflow-hidden">
+                  {markers.map((marker) => (
+                    <div key={marker.id} className="p-3.5 flex items-center justify-between gap-3">
+                      <div>
+                        <span className="text-[10px] font-bold uppercase text-amber-600 bg-amber-50 px-2 py-0.5 rounded">
+                          {marker.category}
+                        </span>
+                        <h6 className="font-bold text-xs text-slate-900 mt-1">{marker.title}</h6>
+                        <span className="text-[10px] text-slate-400">Frame {marker.frameIndex + 1}</span>
+                      </div>
+                      <button
+                        onClick={() => deleteMarker(marker.id)}
+                        className="p-1.5 text-slate-400 hover:text-red-600"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="bg-slate-50 rounded-2xl p-6 text-center text-slate-400 text-xs">
+                  Nenhuma avaria mapeada neste veículo.
+                </div>
               )}
             </div>
           )}
+
+          {/* TAB: SETTINGS */}
+          {activeTab === 'configuracoes' && (
+            <div className="space-y-6">
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-slate-700 block">
+                  Status do Projeto 360°
+                </label>
+                <select
+                  value={projectStatus}
+                  onChange={(e) => {
+                    const next = e.target.value as Vehicle360['status'];
+                    setProjectStatus(next);
+                    if (project) {
+                      saveProject(framesCount, frames, next);
+                    }
+                  }}
+                  className="w-full bg-slate-50 border border-slate-200 text-xs font-bold text-slate-700 rounded-xl px-3.5 py-2.5 focus:outline-none focus:border-red-600"
+                >
+                  <option value="draft">Rascunho (Não visível ao cliente)</option>
+                  <option value="processing">Em andamento</option>
+                  <option value="completed">Concluído e Publicado</option>
+                </select>
+              </div>
+
+              <div className="pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={handleDeleteFull360}
+                  className="w-full py-3 px-4 rounded-xl border border-red-200 text-red-600 hover:bg-red-50 text-xs font-bold transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Excluir Giro 360° do Veículo</span>
+                </button>
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
+
+      {/* High-Resolution Modal for POI Photo Viewer */}
+      {previewHotspotId && (
+        <PoiPhotoModal
+          hotspots={hotspots}
+          currentHotspotId={previewHotspotId}
+          onClose={() => setPreviewHotspotId(null)}
+          onSelectHotspot={(h) => setPreviewHotspotId(h.id)}
+          onRotateToFrame={(frame) => setCurrentFrame(frame)}
+        />
+      )}
     </div>
   );
 }

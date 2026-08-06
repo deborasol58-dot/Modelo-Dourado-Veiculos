@@ -118,6 +118,20 @@ export type DamageCategory =
 export type TechnicalInspectionStatus = 'Não avaliado' | 'OK' | 'Atenção' | 'Problema';
 export type InspectionCategory = 'Exterior' | 'Interior';
 
+export interface VehicleHotspot {
+  id: string;
+  vehicleId: string;
+  title: string;
+  posX: number; // percentage 0-100
+  posY: number; // percentage 0-100
+  frameNumber: number; // 0-based frame index
+  imageId?: string; // UUID from vehicle_images or URL
+  imageUrl: string; // resolved image URL from vehicle_images
+  active?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface VehicleInspectionItem {
   id: string;
   projectId: string;

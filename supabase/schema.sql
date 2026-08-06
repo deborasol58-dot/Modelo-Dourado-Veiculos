@@ -1,10 +1,12 @@
--- Dourado Veículos - Supabase Database Schema
--- Run this script in the SQL Editor of your Supabase Project.
+-- ========================================================================
+-- DOURADO VEÍCULOS - CANONICAL DATABASE SCHEMA (SUPABASE POSTGRESQL)
+-- Clean, unified, single-source-of-truth schema
+-- ========================================================================
 
 -- Enable UUID extension
 create extension if not exists "uuid-ossp";
 
--- 1. Create CATEGORIES Table
+-- 1. CATEGORIES
 create table if not exists categories (
   id uuid default gen_random_uuid() primary key,
   name text not null unique,
@@ -13,7 +15,7 @@ create table if not exists categories (
   "order" integer default 0
 );
 
--- 2. Create VEHICLES Table
+-- 2. VEHICLES
 create table if not exists vehicles (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -40,18 +42,17 @@ create table if not exists vehicles (
   cover_image text
 );
 
--- 3. Create VEHICLE_IMAGES Table
+-- 3. VEHICLE_IMAGES (Gallery and Technical Photos)
 create table if not exists vehicle_images (
   id uuid default gen_random_uuid() primary key,
   vehicle_id uuid references vehicles(id) on delete cascade not null,
   image_url text not null,
-  image_type text default 'gallery', -- 'cover', 'gallery', '360'
-  order_index integer default 0,
+  image_type text default 'gallery', -- 'cover', 'gallery', '360', 'technical'
   display_order integer default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 4. Create VEHICLE_FEATURES Table
+-- 4. VEHICLE_FEATURES
 create table if not exists vehicle_features (
   id uuid default gen_random_uuid() primary key,
   vehicle_id uuid references vehicles(id) on delete cascade not null,
@@ -59,48 +60,67 @@ create table if not exists vehicle_features (
   unique (vehicle_id, feature)
 );
 
--- 5. Create VEHICLE_HOTSPOTS Table (360º View Spots)
+-- 5. VEHICLE_360_PROJECTS (360 Project Per Vehicle)
+create table if not exists vehicle_360_projects (
+  id uuid default gen_random_uuid() primary key,
+  vehicle_id uuid references vehicles(id) on delete cascade not null unique,
+  status text not null default 'draft' check (status in ('draft', 'processing', 'completed')),
+  frame_count integer not null default 0,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 6. VEHICLE_360_FRAMES (Ordered Sequence of 360 Frames)
+create table if not exists vehicle_360_frames (
+  id uuid default gen_random_uuid() primary key,
+  project_id uuid references vehicle_360_projects(id) on delete cascade not null,
+  frame_number integer not null, -- 0-based frame index
+  image_url text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique (project_id, frame_number)
+);
+
+-- 7. VEHICLE_HOTSPOTS (Points of Interest - POIs linked to technical photos)
 create table if not exists vehicle_hotspots (
   id uuid default gen_random_uuid() primary key,
   vehicle_id uuid references vehicles(id) on delete cascade not null,
   title text not null,
   description text,
-  pos_x numeric not null, -- percentage position X (0-100)
-  pos_y numeric not null, -- percentage position Y (0-100)
-  icon text
-);
-
--- 6. Create VEHICLE_360_FRAMES Table
-create table if not exists vehicle_360_frames (
-  id uuid default gen_random_uuid() primary key,
-  vehicle_id uuid references vehicles(id) on delete cascade not null,
-  image_url text,
-  frame_url text,
-  url text,
-  frame_index integer default 0,
-  order_index integer default 0,
-  display_order integer default 0,
+  pos_x numeric not null default 50, -- percentage 0-100
+  pos_y numeric not null default 50, -- percentage 0-100
+  frame_number integer not null default 0, -- 0-based frame index
+  image_id uuid references vehicle_images(id) on delete set null,
+  image_url text not null,
+  active boolean default true,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 7. Create VEHICLE_DAMAGE_IMAGES Table
-create table if not exists vehicle_damage_images (
+-- 8. VEHICLE_DAMAGE_MARKERS (Damage & Flaws Identified on 360)
+create table if not exists vehicle_damage_markers (
   id uuid default gen_random_uuid() primary key,
   vehicle_id uuid references vehicles(id) on delete cascade not null,
   title text not null,
   description text,
-  category text default 'Outro',
-  damage_images text[],
-  image_url text,
-  url text,
-  frame_index integer default 0,
-  pos_x numeric default 0,
-  pos_y numeric default 0,
+  category text default 'Avaria',
+  frame_index integer not null default 0,
+  pos_x numeric not null default 0,
+  pos_y numeric not null default 0,
+  frame_positions jsonb default '{}'::jsonb,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 9. VEHICLE_DAMAGE_IMAGES (High-Resolution Evidence Photos per Damage Marker)
+create table if not exists vehicle_damage_images (
+  id uuid default gen_random_uuid() primary key,
+  marker_id uuid references vehicle_damage_markers(id) on delete cascade not null,
+  image_url text not null,
+  display_order integer default 0,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 8. Create VEHICLE_VIDEOS Table
+-- 10. VEHICLE_VIDEOS
 create table if not exists vehicle_videos (
   id uuid default gen_random_uuid() primary key,
   vehicle_id uuid references vehicles(id) on delete cascade not null,
@@ -109,7 +129,7 @@ create table if not exists vehicle_videos (
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 9. Create LEADS Table
+-- 11. LEADS
 create table if not exists leads (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -121,7 +141,7 @@ create table if not exists leads (
   status text default 'Pendente' -- 'Pendente', 'Respondido', 'Arquivado'
 );
 
--- 9. Create QUOTES Table
+-- 12. QUOTES
 create table if not exists quotes (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -134,7 +154,7 @@ create table if not exists quotes (
   user_id uuid
 );
 
--- 10. Create SCHEDULES Table
+-- 13. SCHEDULES
 create table if not exists schedules (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -148,7 +168,7 @@ create table if not exists schedules (
   user_id uuid
 );
 
--- 11. Create FAVORITES Table
+-- 14. FAVORITES
 create table if not exists favorites (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -157,16 +177,16 @@ create table if not exists favorites (
   unique (user_id, vehicle_id)
 );
 
--- 12. Create ADMINS Table
+-- 15. ADMINS
 create table if not exists admins (
-  id uuid primary key, -- references auth.users.id
+  id uuid primary key,
   name text not null,
   email text not null unique,
-  role text default 'Vendedor', -- 'Administrador', 'Vendedor', 'Editor'
+  role text default 'Vendedor',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
--- 13. Create SETTINGS Table
+-- 16. SETTINGS
 create table if not exists settings (
   id text primary key default 'default',
   company_name text default 'Dourado Veículos',
@@ -181,112 +201,7 @@ create table if not exists settings (
   secondary_color text default '#0f172a'
 );
 
--- Insert default company settings if not exists
-insert into settings (id, company_name, phone, whatsapp, address, hours, primary_color, secondary_color)
-values ('default', 'Dourado Veículos', '(11) 99999-9999', '(11) 99999-9999', 'Av. Paulista, 1000 - São Paulo, SP', 'Segunda a Sexta: 9h às 18h | Sábado: 9h às 13h', '#ef4444', '#0f172a')
-on conflict (id) do nothing;
-
--- Insert default categories
-insert into categories (name, icon, color, "order") values
-  ('Hatch', '🚗', 'bg-blue-500', 1),
-  ('SUV', '🚙', 'bg-green-500', 2),
-  ('Sedan', '🚘', 'bg-indigo-500', 3),
-  ('Picape', '🛻', 'bg-amber-500', 4),
-  ('Utilitário', '🚐', 'bg-purple-500', 5),
-  ('Popular', '🏎️', 'bg-red-500', 6)
-on conflict (name) do nothing;
-
-
--- ========================================================================
--- ROW LEVEL SECURITY (RLS) POLICIES
--- ========================================================================
-
--- Enable Row Level Security on all tables
-alter table categories enable row level security;
-alter table vehicles enable row level security;
-alter table vehicle_images enable row level security;
-alter table vehicle_features enable row level security;
-alter table vehicle_hotspots enable row level security;
-alter table vehicle_360_frames enable row level security;
-alter table vehicle_damage_images enable row level security;
-alter table vehicle_videos enable row level security;
-alter table leads enable row level security;
-alter table quotes enable row level security;
-alter table schedules enable row level security;
-alter table favorites enable row level security;
-alter table admins enable row level security;
-alter table settings enable row level security;
-
--- Policies for public read-only tables
-create policy "Allow public read access to categories" on categories for select using (true);
-create policy "Allow public read access to vehicles" on vehicles for select using (true);
-create policy "Allow public read access to vehicle_images" on vehicle_images for select using (true);
-create policy "Allow public read access to vehicle_features" on vehicle_features for select using (true);
-create policy "Allow public read access to vehicle_hotspots" on vehicle_hotspots for select using (true);
-create policy "Allow public read access to vehicle_360_frames" on vehicle_360_frames for select using (true);
-create policy "Allow public read access to vehicle_damage_images" on vehicle_damage_images for select using (true);
-create policy "Allow public read access to vehicle_videos" on vehicle_videos for select using (true);
-create policy "Allow public read access to settings" on settings for select using (true);
-
--- Allow public insert to leads, quotes, schedules, and favorites
-create policy "Allow public insert leads" on leads for insert with check (true);
-create policy "Allow public read leads" on leads for select using (true);
-create policy "Allow public update leads" on leads for update using (true);
-create policy "Allow public delete leads" on leads for delete using (true);
-
-create policy "Allow public insert quotes" on quotes for insert with check (true);
-create policy "Allow public read quotes" on quotes for select using (true);
-create policy "Allow public update quotes" on quotes for update using (true);
-create policy "Allow public delete quotes" on quotes for delete using (true);
-
-create policy "Allow public insert schedules" on schedules for insert with check (true);
-create policy "Allow public read schedules" on schedules for select using (true);
-create policy "Allow public update schedules" on schedules for update using (true);
-create policy "Allow public delete schedules" on schedules for delete using (true);
-
-create policy "Allow public manage favorites" on favorites for all using (true);
-
--- Vehicle management policies (allow full access for setup/admin)
-create policy "Allow public insert vehicles" on vehicles for insert with check (true);
-create policy "Allow public update vehicles" on vehicles for update using (true);
-create policy "Allow public delete vehicles" on vehicles for delete using (true);
-
-create policy "Allow public insert vehicle_images" on vehicle_images for insert with check (true);
-create policy "Allow public update vehicle_images" on vehicle_images for update using (true);
-create policy "Allow public delete vehicle_images" on vehicle_images for delete using (true);
-
-create policy "Allow public insert vehicle_features" on vehicle_features for insert with check (true);
-create policy "Allow public update vehicle_features" on vehicle_features for update using (true);
-create policy "Allow public delete vehicle_features" on vehicle_features for delete using (true);
-
-create policy "Allow public insert vehicle_360_frames" on vehicle_360_frames for insert with check (true);
-create policy "Allow public update vehicle_360_frames" on vehicle_360_frames for update using (true);
-create policy "Allow public delete vehicle_360_frames" on vehicle_360_frames for delete using (true);
-
-create policy "Allow public insert vehicle_damage_images" on vehicle_damage_images for insert with check (true);
-create policy "Allow public update vehicle_damage_images" on vehicle_damage_images for update using (true);
-create policy "Allow public delete vehicle_damage_images" on vehicle_damage_images for delete using (true);
-
-create policy "Allow public insert vehicle_videos" on vehicle_videos for insert with check (true);
-create policy "Allow public update vehicle_videos" on vehicle_videos for update using (true);
-create policy "Allow public delete vehicle_videos" on vehicle_videos for delete using (true);
-
-create policy "Allow public manage settings" on settings for all using (true);
-create policy "Allow public manage admins" on admins for all using (true);
-
--- ========================================================================
--- STORAGE BUCKETS CONFIGURATION (Instructional)
--- ========================================================================
--- Please create a public bucket named 'vehicles' in your Supabase Storage dashboard.
--- Inside 'vehicles', create the following folders:
---  - cover/
---  - gallery/
---  - 360/
---  - videos/
---  - logos/
--- Set the bucket policy to "Allow public read access" and "Allow public upload access".
-
--- 14. Create VEHICLE_INSPECTION_ITEMS Table
+-- 17. VEHICLE_INSPECTION_ITEMS (Technical Inspection Checklist)
 create table if not exists vehicle_inspection_items (
   id uuid default gen_random_uuid() primary key,
   project_id uuid references vehicles(id) on delete cascade not null,
@@ -299,8 +214,74 @@ create table if not exists vehicle_inspection_items (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- ========================================================================
+-- SEED DEFAULTS
+-- ========================================================================
+
+insert into settings (id, company_name, phone, whatsapp, address, hours, primary_color, secondary_color)
+values ('default', 'Dourado Veículos', '(11) 99999-9999', '(11) 99999-9999', 'Av. Paulista, 1000 - São Paulo, SP', 'Segunda a Sexta: 9h às 18h | Sábado: 9h às 13h', '#ef4444', '#0f172a')
+on conflict (id) do nothing;
+
+insert into categories (name, icon, color, "order") values
+  ('Hatch', '🚗', 'bg-blue-500', 1),
+  ('SUV', '🚙', 'bg-green-500', 2),
+  ('Sedan', '🚘', 'bg-indigo-500', 3),
+  ('Picape', '🛻', 'bg-amber-500', 4),
+  ('Utilitário', '🚐', 'bg-purple-500', 5),
+  ('Popular', '🏎️', 'bg-red-500', 6)
+on conflict (name) do nothing;
+
+-- ========================================================================
+-- ROW LEVEL SECURITY (RLS) POLICIES
+-- ========================================================================
+
+alter table categories enable row level security;
+alter table vehicles enable row level security;
+alter table vehicle_images enable row level security;
+alter table vehicle_features enable row level security;
+alter table vehicle_360_projects enable row level security;
+alter table vehicle_360_frames enable row level security;
+alter table vehicle_hotspots enable row level security;
+alter table vehicle_damage_markers enable row level security;
+alter table vehicle_damage_images enable row level security;
+alter table vehicle_videos enable row level security;
+alter table leads enable row level security;
+alter table quotes enable row level security;
+alter table schedules enable row level security;
+alter table favorites enable row level security;
+alter table admins enable row level security;
+alter table settings enable row level security;
 alter table vehicle_inspection_items enable row level security;
+
+-- Public read policies
+create policy "Allow public read access to categories" on categories for select using (true);
+create policy "Allow public read access to vehicles" on vehicles for select using (true);
+create policy "Allow public read access to vehicle_images" on vehicle_images for select using (true);
+create policy "Allow public read access to vehicle_features" on vehicle_features for select using (true);
+create policy "Allow public read access to vehicle_360_projects" on vehicle_360_projects for select using (true);
+create policy "Allow public read access to vehicle_360_frames" on vehicle_360_frames for select using (true);
+create policy "Allow public read access to vehicle_hotspots" on vehicle_hotspots for select using (true);
+create policy "Allow public read access to vehicle_damage_markers" on vehicle_damage_markers for select using (true);
+create policy "Allow public read access to vehicle_damage_images" on vehicle_damage_images for select using (true);
+create policy "Allow public read access to vehicle_videos" on vehicle_videos for select using (true);
+create policy "Allow public read access to settings" on settings for select using (true);
 create policy "Allow public read access to vehicle_inspection_items" on vehicle_inspection_items for select using (true);
-create policy "Allow public insert vehicle_inspection_items" on vehicle_inspection_items for insert with check (true);
-create policy "Allow public update vehicle_inspection_items" on vehicle_inspection_items for update using (true);
-create policy "Allow public delete vehicle_inspection_items" on vehicle_inspection_items for delete using (true);
+
+-- Public write/manage policies for application operation
+create policy "Allow public manage vehicles" on vehicles for all using (true);
+create policy "Allow public manage vehicle_images" on vehicle_images for all using (true);
+create policy "Allow public manage vehicle_features" on vehicle_features for all using (true);
+create policy "Allow public manage vehicle_360_projects" on vehicle_360_projects for all using (true);
+create policy "Allow public manage vehicle_360_frames" on vehicle_360_frames for all using (true);
+create policy "Allow public manage vehicle_hotspots" on vehicle_hotspots for all using (true);
+create policy "Allow public manage vehicle_damage_markers" on vehicle_damage_markers for all using (true);
+create policy "Allow public manage vehicle_damage_images" on vehicle_damage_images for all using (true);
+create policy "Allow public manage vehicle_videos" on vehicle_videos for all using (true);
+create policy "Allow public manage leads" on leads for all using (true);
+create policy "Allow public manage quotes" on quotes for all using (true);
+create policy "Allow public manage schedules" on schedules for all using (true);
+create policy "Allow public manage favorites" on favorites for all using (true);
+create table if not exists admins (id uuid primary key);
+create policy "Allow public manage admins" on admins for all using (true);
+create policy "Allow public manage settings" on settings for all using (true);
+create policy "Allow public manage vehicle_inspection_items" on vehicle_inspection_items for all using (true);
